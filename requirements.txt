@@ -1,0 +1,14 @@
+fastapi>=0.114.0
+uvicorn[standard]>=0.30.0
+sqlalchemy>=2.0.32
+pydantic>=2.8.2
+requests>=2.32.3
+python-multipart>=0.0.9
+jinja2>=3.1.4
+itsdangerous>=2.2.0
+passlib[bcrypt]>=1.7.4
+cryptography>=43.0.1
+python-dotenv>=1.0.1
+PySimpleGUI>=5.0.6
+playwright>=1.47.0
+prometheus-client>=0.20.0

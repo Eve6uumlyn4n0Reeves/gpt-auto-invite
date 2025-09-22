@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>兑换席位</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>兑换席位</h1>
+      <form id="redeemForm">
+        <label>兑换码</label>
+        <input type="text" id="code" placeholder="请输入兑换码" required />
+        <label>邮箱</label>
+        <input type="email" id="email" placeholder="请输入邮箱" required />
+        <button type="submit">提交</button>
+      </form>
+      <div id="result" class="result"></div>
+    </div>
+    <script>
+      const form = document.getElementById('redeemForm');
+      const result = document.getElementById('result');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        result.textContent = '处理中...';
+        const code = document.getElementById('code').value.trim();
+        const email = document.getElementById('email').value.trim();
+        try {
+          const r = await fetch('/api/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, email }),
+          });
+          const data = await r.json();
+          if (data.success) {
+            result.textContent = `成功：${data.message}（Team: ${data.team_id || '-'}）`;
+          } else {
+            result.textContent = `失败：${data.message}`;
+          }
+        } catch (err) {
+          result.textContent = '请求失败，请稍后重试';
+        }
+      });
+    </script>
+  </body>
+  </html>
+
