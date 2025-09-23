@@ -13,7 +13,7 @@ class InviteService:
         self.db = db
 
     def _choose_target(self, email: str, exclude_mother_ids: Optional[set[int]] = None) -> Optional[tuple[models.MotherAccount, models.MotherTeam]]:
-        # Prefer active mothers with least used seats
+        # 选择 seats 使用较少且活跃的母号，并筛除该邮箱已在团队内的团队
         mothers = (
             self.db.query(models.MotherAccount)
             .filter(models.MotherAccount.status == models.MotherStatus.active)
@@ -39,7 +39,6 @@ class InviteService:
 
         for mother, _ in candidates:
             teams = [t for t in mother.teams if t.is_enabled]
-            # Avoid teams where email already has a seat
             teams = [
                 t
                 for t in teams
@@ -47,7 +46,6 @@ class InviteService:
                 .filter(models.SeatAllocation.team_id == t.team_id, models.SeatAllocation.email == email)
                 .first()
             ]
-            # Ensure mother has a free slot
             has_free = (
                 self.db.query(models.SeatAllocation)
                 .filter(models.SeatAllocation.mother_id == mother.id, models.SeatAllocation.status == models.SeatStatus.free)
@@ -70,7 +68,7 @@ class InviteService:
             tried_mothers.add(mother.id)
             access_token = decrypt_token(mother.access_token_enc)
 
-            # If seat exists for (email, team), idempotent success
+            # 已经占用（幂等）
             exists = (
                 self.db.query(models.SeatAllocation)
                 .filter(models.SeatAllocation.team_id == team.team_id, models.SeatAllocation.email == email)
@@ -87,7 +85,7 @@ class InviteService:
                     self.db.commit()
                 return True, "已占用该团队席位", exists.invite_request_id, mother.id, team.team_id
 
-            # Try to claim a free slot and mark held (30s TTL) atomically
+            # 抢占 free 槽位，置为 held（30s TTL）
             seat = None
             dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
             is_pg = bool(dialect and getattr(dialect, "name", "").startswith("postgres"))
@@ -142,14 +140,15 @@ class InviteService:
                         self.db.commit()
                         seat = self.db.get(models.SeatAllocation, candidate.id)
                         break
-                    # else: contention, retry loop to pick next free seat
+                    # 否则说明并发竞争，重试
+
             if seat is None:
                 if switch_remaining > 0:
                     switch_remaining -= 1
                     continue
                 return False, "暂无可用席位（槽位占满）", None, mother.id, team.team_id
 
-            # Create invite request after seat is held to avoid遗留 pending
+            # 先创建 InviteRequest 再发送，避免遗留 pending
             inv = models.InviteRequest(
                 mother_id=mother.id,
                 team_id=team.team_id,
@@ -205,7 +204,7 @@ class InviteService:
                             continue
                         raise
             except provider.ProviderError as e:
-                # Release held seat
+                # 失败：释放槽位
                 seat.status = models.SeatStatus.free
                 seat.held_until = None
                 seat.team_id = None
@@ -213,13 +212,13 @@ class InviteService:
                 seat.invite_request_id = None
                 seat.invite_id = None
                 self.db.add(seat)
-                # 401/403 => invalidate mother
+                # 401/403 => 母号失效
                 if e.status in (401, 403):
                     m = self.db.get(models.MotherAccount, mother.id)
                     if m:
                         m.status = models.MotherStatus.invalid
                         self.db.add(m)
-                # If transient and allowed to switch, mark invite failed and try next mother
+                # 临时错误且允许切换
                 if e.status in (429, 500, 502, 503, 504) and switch_remaining > 0:
                     inv.status = models.InviteStatus.failed
                     inv.error_code = getattr(e, "code", "error")
@@ -228,15 +227,15 @@ class InviteService:
                     self.db.commit()
                     switch_remaining -= 1
                     continue
-                # Final failure
+                # 最终失败
                 inv.status = models.InviteStatus.failed
                 inv.error_code = getattr(e, "code", "error")
                 inv.error_msg = getattr(e, "message", str(e))[:500]
                 self.db.add(inv)
                 self.db.commit()
-                return False, f"邀请失败 {inv.error_code}", inv.id, mother.id, team.team_id
+                return False, f"邀请失败：{inv.error_code}", inv.id, mother.id, team.team_id
             except Exception as e:
-                # Release held seat and mark failure
+                # 异常：释放槽位并标记失败
                 seat.status = models.SeatStatus.free
                 seat.held_until = None
                 seat.team_id = None
@@ -249,7 +248,7 @@ class InviteService:
                 inv.error_msg = str(e)[:500]
                 self.db.add(inv)
                 self.db.commit()
-                return False, "邀请失败 系统异常", inv.id, mother.id, team.team_id
+                return False, "邀请失败：系统异常", inv.id, mother.id, team.team_id
 
 
 def resend_invite(db: Session, email: str, team_id: str) -> tuple[bool, str]:
@@ -298,7 +297,7 @@ def cancel_invite(db: Session, email: str, team_id: str) -> tuple[bool, str]:
                         break
         if invite_id:
             provider.cancel_invite(token, inv.team_id, invite_id)
-        # Free seat if exists
+        # 释放席位（若存在）
         seat = (
             db.query(models.SeatAllocation)
             .filter(models.SeatAllocation.team_id == inv.team_id, models.SeatAllocation.email == email)
@@ -311,7 +310,8 @@ def cancel_invite(db: Session, email: str, team_id: str) -> tuple[bool, str]:
             seat.email = None
             seat.invite_request_id = None
             seat.invite_id = None
-            db.add(seat)
+            self_db = db
+            self_db.add(seat)
         inv.status = models.InviteStatus.cancelled
         db.add(inv)
         db.commit()
@@ -373,7 +373,7 @@ def remove_member(db: Session, email: str, team_id: str) -> tuple[bool, str]:
         if not member_id:
             return True, "成员不存在，视为已移除"
         provider.delete_member(token, team_id, member_id)
-        # Free seat
+        # 释放席位
         seat = (
             db.query(models.SeatAllocation)
             .filter(models.SeatAllocation.email == email, models.SeatAllocation.team_id == team_id)
@@ -407,3 +407,4 @@ def remove_member(db: Session, email: str, team_id: str) -> tuple[bool, str]:
             db.commit()
             return True, "成员不存在，视为已移除并释放席位"
         return False, f"移除失败: {e.code}"
+

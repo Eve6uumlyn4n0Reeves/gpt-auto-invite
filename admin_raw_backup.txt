@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Response, HTTPException
+﻿from fastapi import APIRouter, Depends, Request, Response, HTTPException
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app import models
@@ -42,14 +42,14 @@ def get_db():
 def require_admin(request: Request, db: Session = Depends(get_db)):
     sess = request.cookies.get("admin_session")
     if not sess or not verify_session(sess, max_age_seconds=settings.admin_session_ttl_seconds):
-        raise HTTPException(status_code=401, detail="未认证")
+        raise HTTPException(status_code=401, detail="鏈璇?)
     sid = unsign_session(sess, max_age_seconds=settings.admin_session_ttl_seconds)
     if not sid:
-        raise HTTPException(status_code=401, detail="未认证")
+        raise HTTPException(status_code=401, detail="鏈璇?)
     row = db.query(models.AdminSession).filter(models.AdminSession.session_id == sid).first()
     now = __import__("datetime").datetime.utcnow()
     if not row or row.revoked or row.expires_at <= now:
-        raise HTTPException(status_code=401, detail="未认证")
+        raise HTTPException(status_code=401, detail="鏈璇?)
     row.last_seen_at = now
     db.add(row)
     db.commit()
@@ -64,23 +64,17 @@ admin_ops_rl = SimpleRateLimiter(60, 60)
 def admin_login(payload: AdminLoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "_"
     if not login_rl.allow(f"login:{ip}"):
-        raise HTTPException(status_code=429, detail="尝试过于频繁")
+        raise HTTPException(status_code=429, detail="灏濊瘯杩囦簬棰戠箒")
     row = db.query(models.AdminConfig).first()
     if not row:
         # bootstrap with initial password
         create_or_update_admin_default(db, hash_password(settings.admin_initial_password))
         row = db.query(models.AdminConfig).first()
-    # Verify main password; allow optional extra password after start time
     if not verify_password(payload.password, row.password_hash):
-        try:
-            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-        except Exception:
-            now = __import__("datetime").datetime.utcnow()
-        if not (settings.extra_password and payload.password == settings.extra_password and now >= settings.extra_password_start_at):
-            raise HTTPException(status_code=401, detail="密码错误")
+        raise HTTPException(status_code=401, detail="瀵嗙爜閿欒")
     # create server-side session
     import uuid
-    from datetime import datetime
+    from datetime import datetime, timedelta
     sid = uuid.uuid4().hex
     expires_at = datetime.utcnow() + __import__("datetime").timedelta(seconds=settings.admin_session_ttl_seconds)
     db.add(models.AdminSession(session_id=sid, expires_at=expires_at, ip=request.client.host if request.client else None, ua=request.headers.get('user-agent')))
@@ -124,18 +118,9 @@ def admin_logout_all(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=AdminMeOut)
-def admin_me(request: Request, db: Session = Depends(get_db)):
+def admin_me(request: Request):
     sess = request.cookies.get("admin_session")
-    if not sess or not verify_session(sess, max_age_seconds=settings.admin_session_ttl_seconds):
-        return AdminMeOut(authenticated=False)
-    sid = unsign_session(sess, max_age_seconds=settings.admin_session_ttl_seconds)
-    if not sid:
-        return AdminMeOut(authenticated=False)
-    row = db.query(models.AdminSession).filter(models.AdminSession.session_id == sid).first()
-    now = __import__("datetime").datetime.utcnow()
-    if not row or row.revoked or row.expires_at <= now:
-        return AdminMeOut(authenticated=False)
-    return AdminMeOut(authenticated=True)
+    return AdminMeOut(authenticated=bool(sess and verify_session(sess, max_age_seconds=settings.admin_session_ttl_seconds)))
 
 
 @router.post("/mothers/import-cookie", response_model=ImportCookieOut)
@@ -147,8 +132,8 @@ def mothers_import_cookie(req: ImportCookieIn, request: Request, db: Session = D
 
 
 @router.post("/mothers/import-access-token", response_model=ImportCookieOut)
-def mothers_import_access_token(req: ImportAccessTokenIn, request: Request, db: Session = Depends(get_db)):
-    require_admin(request, db)
+def mothers_import_access_token(req: ImportAccessTokenIn, request: Request):
+    require_admin(request)
     # Just echo back as normalized structure; validation can be deferred to when saving mother or via self-check
     return ImportCookieOut(access_token=req.access_token, token_expires_at=req.token_expires_at, user_email=req.user_email, account_id=req.account_id)
 
@@ -172,7 +157,7 @@ def mothers_update_teams(mother_id: int, req: MotherTeamsUpdateIn, request: Requ
     require_admin(request, db)
     mother = db.get(models.MotherAccount, mother_id)
     if not mother:
-        raise HTTPException(status_code=404, detail="母号不存在")
+        raise HTTPException(status_code=404, detail="姣嶅彿涓嶅瓨鍦?)
     # ensure single default
     default_set = False
     desired = []
@@ -219,7 +204,7 @@ def admin_change_password(req: AdminChangePasswordIn, request: Request, db: Sess
     require_admin(request, db)
     row = db.query(models.AdminConfig).first()
     if not row or not verify_password(req.old_password, row.password_hash):
-        raise HTTPException(status_code=401, detail="旧密码错误")
+        raise HTTPException(status_code=401, detail="鏃у瘑鐮侀敊璇?)
     row.password_hash = hash_password(req.new_password)
     db.add(row)
     # revoke all sessions after password change
@@ -244,7 +229,7 @@ def admin_resend(req: ResendIn, request: Request, db: Session = Depends(get_db))
     require_admin(request, db)
     ip = request.client.host if request.client else "_"
     if not admin_ops_rl.allow(f"resend:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+        raise HTTPException(status_code=429, detail="鎿嶄綔杩囦簬棰戠箒")
     email = (req.email or "").strip().lower()
     ok, msg = resend_invite(db, email, req.team_id)
     audit_svc.log(db, actor="admin", action="resend_invite", target_type="team", target_id=req.team_id, payload_redacted=f"email={mask(req.email)} ok={ok}", ip=request.client.host if request.client else None, ua=request.headers.get('user-agent'))
@@ -256,7 +241,7 @@ def admin_cancel(req: CancelInviteIn, request: Request, db: Session = Depends(ge
     require_admin(request, db)
     ip = request.client.host if request.client else "_"
     if not admin_ops_rl.allow(f"cancel:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+        raise HTTPException(status_code=429, detail="鎿嶄綔杩囦簬棰戠箒")
     email = (req.email or "").strip().lower()
     ok, msg = cancel_invite(db, email, req.team_id)
     audit_svc.log(db, actor="admin", action="cancel_invite", target_type="team", target_id=req.team_id, payload_redacted=f"email={mask(req.email)} ok={ok}", ip=request.client.host if request.client else None, ua=request.headers.get('user-agent'))
@@ -268,7 +253,7 @@ def admin_remove(req: RemoveMemberIn, request: Request, db: Session = Depends(ge
     require_admin(request, db)
     ip = request.client.host if request.client else "_"
     if not admin_ops_rl.allow(f"remove:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+        raise HTTPException(status_code=429, detail="鎿嶄綔杩囦簬棰戠箒")
     email = (req.email or "").strip().lower()
     ok, msg = remove_member(db, email, req.team_id)
     audit_svc.log(db, actor="admin", action="remove_member", target_type="team", target_id=req.team_id, payload_redacted=f"email={mask(req.email)} ok={ok}", ip=request.client.host if request.client else None, ua=request.headers.get('user-agent'))
@@ -315,7 +300,7 @@ def mother_slot_force_free(mother_id: int, slot_index: int, request: Request, db
         .first()
     )
     if not seat:
-        raise HTTPException(status_code=404, detail="槽位不存在")
+        raise HTTPException(status_code=404, detail="妲戒綅涓嶅瓨鍦?)
     seat.status = models.SeatStatus.free
     seat.held_until = None
     seat.team_id = None
@@ -324,7 +309,7 @@ def mother_slot_force_free(mother_id: int, slot_index: int, request: Request, db
     seat.invite_id = None
     db.add(seat)
     db.commit()
-    audit_svc.log(db, actor="admin", action="force_free_slot", target_type="母号", target_id=str(mother_id), payload_redacted=f"slot={slot_index}", ip=request.client.host if request.client else None, ua=request.headers.get('user-agent'))
+    audit_svc.log(db, actor="admin", action="force_free_slot", target_type="mother", target_id=str(mother_id), payload_redacted=f"slot={slot_index}", ip=request.client.host if request.client else None, ua=request.headers.get('user-agent'))
     return {"ok": True}
 
 
@@ -333,11 +318,11 @@ def mother_selfcheck(mother_id: int, request: Request, db: Session = Depends(get
     require_admin(request, db)
     mother = db.get(models.MotherAccount, mother_id)
     if not mother:
-        raise HTTPException(status_code=404, detail="母号不存在")
+        raise HTTPException(status_code=404, detail="姣嶅彿涓嶅瓨鍦?)
     # pick an enabled team
     team = next((t for t in mother.teams if t.is_enabled), None)
     if not team:
-        return {"ok": False, "message": "无启用团队"}
+        return {"ok": False, "message": "鏃犲惎鐢ㄥ洟闃?}
     from app.security import decrypt_token
     from app import provider
     token = decrypt_token(mother.access_token_enc)

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app import models
 from app.metrics import provider_metrics
+from app.routers.admin import require_admin
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin-stats"])
@@ -17,10 +18,12 @@ def get_db():
 
 
 @router.get("/stats")
-def stats(db: Session = Depends(get_db)):
+def stats(request: Request, db: Session = Depends(get_db)):
+    # Protect admin stats
+    require_admin(request, db)
     mothers = db.query(models.MotherAccount).count()
     teams = db.query(models.MotherTeam).count()
-    # 浠呯粺璁″浜?held/used 鐨勫腑浣嶆暟閲忥紝绗﹀悎鈥滃凡鍗犵敤甯綅鈥濈殑璇箟
+    # 统计处于 held/used 状态的席位数量，符合“已占用席位”的定义
     seats_used = (
         db.query(models.SeatAllocation)
         .filter(models.SeatAllocation.status.in_([models.SeatStatus.held, models.SeatStatus.used]))
@@ -38,4 +41,3 @@ def stats(db: Session = Depends(get_db)):
         "invites_failed": invites_failed,
         "provider_metrics": provider_metrics.snapshot(),
     }
-

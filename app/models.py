@@ -138,7 +138,7 @@ class RedeemCode(Base):
     used_by_team_id = Column(String(64), nullable=True)
     used_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
-    metadata = Column(Text, nullable=True)
+    meta_json = Column(Text, nullable=True)
     __table_args__ = (
         Index("ix_redeem_status_exp", "status", "expires_at"),
     )

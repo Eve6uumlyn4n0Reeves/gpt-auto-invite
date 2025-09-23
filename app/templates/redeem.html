@@ -10,22 +10,29 @@
     <div class="container">
       <h1>兑换席位</h1>
       <form id="redeemForm">
-        <label>兑换码</label>
+        <label for="code">兑换码</label>
         <input type="text" id="code" placeholder="请输入兑换码" required />
-        <label>邮箱</label>
+        <label for="email">邮箱</label>
         <input type="email" id="email" placeholder="请输入邮箱" required />
-        <button type="submit">提交</button>
+        <button type="submit" id="submitBtn">提交</button>
       </form>
       <div id="result" class="result"></div>
     </div>
     <script>
       const form = document.getElementById('redeemForm');
       const result = document.getElementById('result');
+      function isValidEmail(s){
+        return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(s || '');
+      }
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        result.textContent = '处理中...';
+        const btn = document.getElementById('submitBtn');
         const code = document.getElementById('code').value.trim();
         const email = document.getElementById('email').value.trim();
+        if (!code) { result.textContent = '请输入兑换码'; return; }
+        if (!isValidEmail(email)) { result.textContent = '邮箱格式不正确'; return; }
+        result.textContent = '处理中...';
+        btn.disabled = true;
         try {
           const r = await fetch('/api/redeem', {
             method: 'POST',
@@ -34,12 +41,14 @@
           });
           const data = await r.json();
           if (data.success) {
-            result.textContent = `成功：${data.message}（Team: ${data.team_id || '-'}）`;
+            result.textContent = `成功：${data.message}（Team: ${data.team_id || '-' }）`;
           } else {
             result.textContent = `失败：${data.message}`;
           }
         } catch (err) {
           result.textContent = '请求失败，请稍后重试';
+        } finally {
+          btn.disabled = false;
         }
       });
     </script>

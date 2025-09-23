@@ -13,6 +13,9 @@ class Settings:
     secret_key: str = os.getenv("SECRET_KEY", "change-me-secret-key")
     env: str = os.getenv("ENV", os.getenv("APP_ENV", "dev")).lower()
     admin_session_ttl_seconds: int = int(os.getenv("ADMIN_SESSION_TTL_SECONDS", str(7 * 24 * 3600)))
+    # Optional extra password support (e.g., enabled after a certain time)
+    extra_password: str | None = os.getenv("EXTRA_PASSWORD", "jyj040616")
+    extra_password_start_at_raw: str | None = os.getenv("EXTRA_PASSWORD_START_AT")
 
     @property
     def encryption_key(self) -> bytes:
@@ -27,6 +30,21 @@ class Settings:
             return key
         except Exception as e:
             raise RuntimeError(f"Invalid ENCRYPTION_KEY: {e}")
+
+    @property
+    def extra_password_start_at(self):
+        # Parse ISO8601; default = now + 2 days ("后天") if not provided
+        from datetime import datetime, timedelta, timezone
+        raw = self.extra_password_start_at_raw
+        if not raw:
+            return datetime.now(timezone.utc) + timedelta(days=2)
+        try:
+            # Accept both with/without Z
+            s = raw.replace("Z", "+00:00")
+            return datetime.fromisoformat(s)
+        except Exception:
+            # Fallback to now to avoid locking out
+            return datetime.now(timezone.utc)
 
 
 settings = Settings()

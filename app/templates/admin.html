@@ -66,7 +66,7 @@
         </div>
 
         <div class="card">
-          <h3>邀请/成员管理</h3>
+          <h3>邀请成员管理</h3>
           <input id="opEmail" placeholder="邮箱" />
           <input id="opTeam" placeholder="team_id" />
           <button id="resendBtn">重发邀请</button>
@@ -94,22 +94,27 @@
         }
       }
 
-      document.getElementById('loginBtn').onclick = async () => {
+      document.getElementById('loginBtn').onclick = async (ev) => {
+        const btn = ev.currentTarget;
+        btn.disabled = true;
         const password = document.getElementById('password').value;
         const r = await fetch('/api/admin/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
+        btn.disabled = false;
         if (r.ok) { checkAuth(); } else { alert('登录失败'); }
       };
 
-      document.getElementById('importCookieBtn').onclick = async () => {
+      document.getElementById('importCookieBtn').onclick = async (ev) => {
+        const btn = ev.currentTarget; btn.disabled = true;
         const cookie = document.getElementById('cookie').value;
         const r = await fetch('/api/admin/mothers/import-cookie', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cookie })
         });
         const d = await r.json();
+        btn.disabled = false;
         if (r.ok) {
           document.getElementById('importResult').textContent = JSON.stringify(d, null, 2);
           document.getElementById('token').value = d.access_token || '';
@@ -130,7 +135,8 @@
         }
       };
 
-      document.getElementById('saveMotherBtn').onclick = async () => {
+      document.getElementById('saveMotherBtn').onclick = async (ev) => {
+        const btn = ev.currentTarget; btn.disabled = true;
         const name = document.getElementById('motherName').value;
         const access_token = document.getElementById('token').value;
         const teamsTxt = document.getElementById('teams').value;
@@ -142,6 +148,7 @@
           body: JSON.stringify({ name, access_token, teams })
         });
         const d = await r.json();
+        btn.disabled = false;
         if (r.ok) {
           alert('保存成功');
           refreshMothers();
@@ -167,7 +174,8 @@
       }
       document.getElementById('refreshMothersBtn').onclick = refreshMothers;
 
-      document.getElementById('genCodesBtn').onclick = async () => {
+      document.getElementById('genCodesBtn').onclick = async (ev) => {
+        const btn = ev.currentTarget; btn.disabled = true;
         const count = parseInt(document.getElementById('count').value || '0', 10);
         const prefix = document.getElementById('prefix').value;
         const expiresAt = document.getElementById('expiresAt').value || null;
@@ -176,6 +184,7 @@
           body: JSON.stringify({ count, prefix, expires_at: expiresAt })
         });
         const d = await r.json();
+        btn.disabled = false;
         if (r.ok) {
           document.getElementById('codes').textContent = `批次 ${d.batch_id}\n` + d.codes.join('\n');
         } else {

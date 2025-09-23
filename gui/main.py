@@ -53,7 +53,7 @@ def run_gui():
         ])],
         [sg.Frame('Token', [
             [sg.Multiline('', key='-TOKEN-JSON-', size=(70,8))],
-            [sg.Button('Login & Fetch Token'), sg.Button("I'm Logged In, Fetch Token"), sg.Button('Send to Backend'), sg.Button('Quit')],
+            [sg.Button('Login & Fetch Token'), sg.Button("I'm Logged In, Fetch Token"), sg.Button('Send to Backend'), sg.Button('Reset Browser'), sg.Button('Quit')],
         ])],
         [sg.StatusBar('Ready', key='-STATUS-')]
     ]
@@ -138,24 +138,54 @@ def run_gui():
                                 'is_enabled': True,
                                 'is_default': i == 0,
                             })
-                    client = BackendClient(base)
                     pwd = sg.popup_get_text('Admin Password', password_char='*')
                     if not pwd:
                         window['-STATUS-'].update('Cancelled.')
                         continue
-                    if not client.admin_login(pwd):
-                        window['-STATUS-'].update('Admin login failed')
-                        continue
-                    r = client.save_mother(name=name, access_token=access_token, token_expires_at=token_expires_at, teams=teams, notes=notes)
-                    if r.ok:
-                        window['-STATUS-'].update(f'Saved mother OK: {r.json()}')
-                    else:
+                    window['-STATUS-'].update('Sending to backend...')
+
+                    def _worker_send(base_url, password, name, access_token, token_expires_at, teams, notes):
                         try:
-                            window['-STATUS-'].update(f'Failed: {r.status_code} {r.json()}')
-                        except Exception:
-                            window['-STATUS-'].update(f'Failed: {r.status_code} {r.text}')
+                            client = BackendClient(base_url)
+                            if not client.admin_login(password):
+                                window.write_event_value('-SEND-DONE-', {'ok': False, 'error': 'Admin login failed'})
+                                return
+                            r = client.save_mother(name=name, access_token=access_token, token_expires_at=token_expires_at, teams=teams, notes=notes)
+                            try:
+                                payload = r.json()
+                            except Exception:
+                                payload = r.text
+                            window.write_event_value('-SEND-DONE-', {'ok': r.ok, 'status': r.status_code, 'payload': payload})
+                        except Exception as e:
+                            window.write_event_value('-SEND-DONE-', {'ok': False, 'error': str(e)})
+
+                    threading.Thread(target=_worker_send, args=(base, pwd, name, access_token, token_expires_at, teams, notes), daemon=True).start()
                 except Exception as e:
                     window['-STATUS-'].update(f'Send failed: {e}')
+
+            if event == '-SEND-DONE-':
+                data = values.get('-SEND-DONE-')
+                if not data:
+                    window['-STATUS-'].update('No response data')
+                elif data.get('ok'):
+                    window['-STATUS-'].update(f"Saved mother OK: {data.get('payload')}")
+                else:
+                    if 'error' in data:
+                        window['-STATUS-'].update(f"Failed: {data['error']}")
+                    else:
+                        window['-STATUS-'].update(f"Failed: {data.get('status')} {data.get('payload')}")
+
+            if event == 'Reset Browser':
+                try:
+                    if context:
+                        context.close()
+                        context = None
+                    if page:
+                        page.close()
+                        page = None
+                    window['-STATUS-'].update('Browser reset. Click Login & Fetch Token.')
+                except Exception as e:
+                    window['-STATUS-'].update(f'Reset failed: {e}')
     finally:
         try:
             if context:
@@ -170,4 +200,3 @@ def run_gui():
 
 if __name__ == '__main__':
     run_gui()
-
