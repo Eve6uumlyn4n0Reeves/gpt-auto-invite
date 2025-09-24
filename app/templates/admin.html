@@ -12,7 +12,7 @@
       <div id="auth"></div>
       <div id="login" class="card">
         <h3>登录</h3>
-        <input type="password" id="password" placeholder="后台密码（默认 admin）" />
+        <input type="password" id="password" placeholder="后台密码" />
         <button id="loginBtn">登录</button>
       </div>
 
@@ -116,8 +116,9 @@
         const d = await r.json();
         btn.disabled = false;
         if (r.ok) {
-          document.getElementById('importResult').textContent = JSON.stringify(d, null, 2);
           document.getElementById('token').value = d.access_token || '';
+          document.getElementById('bmResult').textContent = 'Token 已填充';
+          document.getElementById('importResult').textContent = JSON.stringify(d, null, 2);
         } else {
           document.getElementById('importResult').textContent = '解析失败：' + (d.detail || '');
         }
@@ -125,10 +126,9 @@
 
       document.getElementById('applyBmJson').onclick = () => {
         try {
-          const txt = document.getElementById('bmJson').value.trim();
-          if (!txt) { return; }
-          const data = JSON.parse(txt);
-          document.getElementById('token').value = data.access_token || '';
+          const raw = document.getElementById('bmJson').value.trim();
+          const j = JSON.parse(raw || '{}');
+          document.getElementById('token').value = j.access_token || '';
           document.getElementById('bmResult').textContent = '已应用到表单';
         } catch (e) {
           document.getElementById('bmResult').textContent = 'JSON 无效：' + e;
@@ -137,20 +137,22 @@
 
       document.getElementById('saveMotherBtn').onclick = async (ev) => {
         const btn = ev.currentTarget; btn.disabled = true;
-        const name = document.getElementById('motherName').value;
-        const access_token = document.getElementById('token').value;
-        const teamsTxt = document.getElementById('teams').value;
+        const name = document.getElementById('motherName').value.trim();
+        const access_token = document.getElementById('token').value.trim();
+        const teams_txt = document.getElementById('teams').value.trim();
         const defaultFirst = document.getElementById('defaultFirst').checked;
-        const ids = (teamsTxt || '').split(',').map(s => s.trim()).filter(Boolean);
-        const teams = ids.map((id, idx) => ({ team_id: id, team_name: id, is_enabled: true, is_default: defaultFirst && idx === 0 }));
-        const r = await fetch('/api/admin/mothers', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, access_token, teams })
-        });
+        if (!name || !access_token) { alert('名称与 Token 均必填'); btn.disabled=false; return; }
+        const teams = [];
+        if (teams_txt) {
+          const arr = teams_txt.split(',').map(s=>s.trim()).filter(Boolean);
+          arr.forEach((team_id, idx) => teams.push({ team_id, team_name: team_id, is_enabled: true, is_default: defaultFirst && idx===0 }));
+        }
+        const payload = { name, access_token, teams };
+        const r = await fetch('/api/admin/mothers', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const d = await r.json();
         btn.disabled = false;
         if (r.ok) {
-          alert('保存成功');
+          alert('保存成功：ID=' + d.id);
           refreshMothers();
         } else {
           alert('保存失败：' + (d.detail || ''));
@@ -232,7 +234,7 @@
         const pre = document.getElementById('slots');
         if (!Array.isArray(d)) { pre.textContent = JSON.stringify(d); return; }
         const lines = d.map(s => `${s.slot_index}. ${s.status}  ${s.email || ''}  ${s.team_id || ''}`);
-        // 安全渲染：文本内容使用 textContent，按钮使用 DOM 创建
+        // 安全渲染：文本用 textContent，按钮用 DOM 创建
         pre.textContent = lines.join('\n');
         const container = document.createElement('div');
         d.forEach(s => {

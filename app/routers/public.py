@@ -32,8 +32,16 @@ def redeem(req: RedeemIn, request: StarletteRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
     if not is_valid_email(req.email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
-    ok, msg, invite_request_id, mother_id, team_id = redeem_code(db, req.code.strip(), req.email.strip().lower())
-    return RedeemOut(success=ok, message=msg, invite_request_id=invite_request_id, mother_id=mother_id, team_id=team_id)
+    ok, msg, invite_request_id, mother_id, team_id = redeem_code(
+        db, req.code.strip(), req.email.strip().lower()
+    )
+    return RedeemOut(
+        success=ok,
+        message=msg,
+        invite_request_id=invite_request_id,
+        mother_id=mother_id,
+        team_id=team_id,
+    )
 
 
 @router.post("/redeem/resend")

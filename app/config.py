@@ -7,14 +7,16 @@ from dataclasses import dataclass
 class Settings:
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data.db")
     encryption_key_b64: str = os.getenv("ENCRYPTION_KEY", "")
-    admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "admin")
+    # Default admin password (for first-time login)
+    admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "jyj040616")
     http_proxy: str | None = os.getenv("HTTP_PROXY")
     https_proxy: str | None = os.getenv("HTTPS_PROXY")
     secret_key: str = os.getenv("SECRET_KEY", "change-me-secret-key")
     env: str = os.getenv("ENV", os.getenv("APP_ENV", "dev")).lower()
     admin_session_ttl_seconds: int = int(os.getenv("ADMIN_SESSION_TTL_SECONDS", str(7 * 24 * 3600)))
     # Optional extra password support (e.g., enabled after a certain time)
-    extra_password: str | None = os.getenv("EXTRA_PASSWORD", "jyj040616")
+    # For safety, default to None; set via env only if explicitly needed.
+    extra_password: str | None = os.getenv("EXTRA_PASSWORD")
     extra_password_start_at_raw: str | None = os.getenv("EXTRA_PASSWORD_START_AT")
 
     @property
