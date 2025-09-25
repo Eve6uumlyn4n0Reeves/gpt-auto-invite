@@ -10,14 +10,14 @@ Key features
 - Security: access tokens encrypted at rest (AES-GCM), admin password hashed (bcrypt), logs redacted.
 
 Quick start
-1) Install deps: `pip install -r requirements.txt`
+1) Install deps: `pip install -r requirements.txt` (Windows/本地默认从 `gptautoinvite/requirements.backend.txt` 安装)
 2) Set env vars (or `.env`):
    - `ENCRYPTION_KEY` (Base64 32 bytes, e.g. from `python - <<<'import os,base64;print(base64.b64encode(os.urandom(32)).decode())'`)
    - `ADMIN_INITIAL_PASSWORD` (optional; default is `admin` if missing)
-   - `DATABASE_URL` (optional; defaults to `sqlite:///./data.db`)
+   - `DATABASE_URL` (optional; defaults to `sqlite:///./data/app.db`)
    - `ENV=prod` and `SECRET_KEY` (required for production; app will refuse to start if missing)
    - `HTTP_PROXY` / `HTTPS_PROXY` (optional for outbound requests)
-3) Run: `uvicorn app.main:app --reload --port 8000`
+3) Run: `./run.ps1 -Port 8000` (Windows PowerShell)
 4) Open admin: `http://localhost:8000/admin` (password = `ADMIN_INITIAL_PASSWORD` or `admin`)
 5) Open redeem: `http://localhost:8000/redeem`
 
