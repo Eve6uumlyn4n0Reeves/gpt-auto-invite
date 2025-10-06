@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "name": "gpt-team-auto-invite",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ],
+  "env": {
+    "BACKEND_URL": "@backend_url",
+    "ADMIN_INITIAL_PASSWORD": "@admin_initial_password",
+    "SECRET_KEY": "@secret_key",
+    "ENCRYPTION_KEY": "@encryption_key"
+  },
+  "functions": {
+    "app/api/**/*.ts": {
+      "runtime": "nodejs18.x"
+    }
+  }
+}
