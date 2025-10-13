@@ -2,11 +2,27 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.schemas import RedeemIn, RedeemOut, ResendIn
-from app.utils.email_utils import is_valid_email
-from app.services.redeem import redeem_code
-from app.services.invites import resend_invite
-from app.utils.rate_limit import SimpleRateLimiter
+from app.utils.utils.email_utils import is_valid_email
+from app.services.services.redeem import redeem_code
+from app.services.services.invites import resend_invite
+from app.services.services.rate_limiter_service import get_rate_limiter, ip_strategy, email_strategy
+from app.utils.utils.rate_limiter.fastapi_integration import rate_limit
 from starlette.requests import Request as StarletteRequest
+
+
+async def get_rate_limiter_dep():
+    """获取限流器依赖"""
+    return await get_rate_limiter()
+
+
+async def redeem_rate_limit_dep(request: StarletteRequest, limiter = Depends(get_rate_limiter_dep)):
+    """兑换接口限流依赖"""
+    return rate_limit(limiter, ip_strategy, config_id="redeem:by_ip")(request)
+
+
+async def resend_rate_limit_dep(request: StarletteRequest, limiter = Depends(get_rate_limiter_dep)):
+    """重发接口限流依赖"""
+    return rate_limit(limiter, ip_strategy, config_id="resend:by_ip")(request)
 
 router = APIRouter(prefix="/api", tags=["public"])
 
@@ -19,16 +35,14 @@ def get_db():
         db.close()
 
 
-# simple in-memory rate limiters
-redeem_rl = SimpleRateLimiter(max_events=60, per_seconds=60)
-resend_rl = SimpleRateLimiter(max_events=10, per_seconds=60)
-
-
 @router.post("/redeem", response_model=RedeemOut)
-def redeem(req: RedeemIn, request: StarletteRequest, db: Session = Depends(get_db)):
-    ip = request.client.host if request.client else "_"
-    if not redeem_rl.allow(f"redeem:{ip}"):
-        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试")
+async def redeem(
+    req: RedeemIn,
+    request: StarletteRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(redeem_rate_limit_dep)
+):
+    """兑换邀请码 - 限流：每小时5次（按IP）"""
 
     if not is_valid_email(req.email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
@@ -47,11 +61,13 @@ def redeem(req: RedeemIn, request: StarletteRequest, db: Session = Depends(get_d
 
 
 @router.post("/redeem/resend")
-def redeem_resend(req: ResendIn, request: StarletteRequest, db: Session = Depends(get_db)):
-    ip = request.client.host if request.client else "_"
-    key = f"resend:{ip}:{(req.email or '').lower()}"
-    if not resend_rl.allow(key):
-        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试")
+async def redeem_resend(
+    req: ResendIn,
+    request: StarletteRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(resend_rate_limit_dep)
+):
+    """重发邀请 - 限流：每小时3次（按IP）"""
 
     if not is_valid_email(req.email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")

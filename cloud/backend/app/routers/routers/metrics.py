@@ -3,7 +3,7 @@ from app.metrics_prom import CONTENT_TYPE_LATEST, generate_latest
 from app.config import settings
 from app.database import SessionLocal
 from sqlalchemy.orm import Session
-from app.routers.admin import require_admin
+from app.routers.routers.admin import require_admin
 
 router = APIRouter()
 

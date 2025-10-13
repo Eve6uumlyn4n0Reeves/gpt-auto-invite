@@ -12,11 +12,13 @@ interface MobileNavigationProps {
   onLogout: () => void
 }
 
+type TabId = string
+
 export function MobileNavigation({ currentTab, onTabChange, onLogout }: MobileNavigationProps) {
   const [isOpen, setIsOpen] = useState(false)
   const { isTouch, enableGestures } = useMobileGestures()
 
-  const navigationItems = [
+  const navigationItems: Array<{ id: TabId; label: string; icon: any }> = [
     { id: "overview", label: "概览", icon: Home },
     { id: "mothers", label: "母账号", icon: Users },
     { id: "codes-status", label: "码状态", icon: CreditCard },

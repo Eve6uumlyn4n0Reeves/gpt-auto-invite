@@ -8,7 +8,7 @@ interface ContextMenuItem {
   id: string
   label: string
   icon?: React.ReactNode
-  action: () => void
+  action?: () => void
   disabled?: boolean
   separator?: boolean
   shortcut?: string
@@ -42,7 +42,7 @@ export function useContextMenu() {
 
   const handleItemClick = useCallback(
     (item: ContextMenuItem) => {
-      if (!item.disabled) {
+      if (!item.disabled && item.action) {
         item.action()
         closeContextMenu()
       }

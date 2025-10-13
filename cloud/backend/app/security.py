@@ -112,13 +112,39 @@ def unsign_session(signed: str, max_age_seconds: int = 7 * 24 * 3600) -> str | N
     except BadSignature:
         return None
 
-def get_security_headers() -> Dict[str, str]:
+def generate_nonce() -> str:
+    """生成CSP nonce"""
+    return base64.b64encode(os.urandom(16)).decode('utf-8')
+
+def get_security_headers(nonce: Optional[str] = None) -> Dict[str, str]:
     """生成安全HTTP头部"""
+    # 构建CSP策略，移除unsafe-inline，使用nonce
+    script_src = "'self'"
+    style_src = "'self'"
+
+    if nonce:
+        script_src += f" 'nonce-{nonce}'"
+        style_src += f" 'nonce-{nonce}'"
+
+    csp_policy = (
+        f"default-src 'self'; "
+        f"script-src {script_src}; "
+        f"style-src {style_src}; "
+        f"img-src 'self' data: blob:; "
+        f"font-src 'self' data:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self'; "
+        f"upgrade-insecure-requests"
+    )
+
     return {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "X-XSS-Protection": "1; mode=block",
-        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
-        "Referrer-Policy": "strict-origin-when-cross-origin"
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+        "Content-Security-Policy": csp_policy,
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()"
     }

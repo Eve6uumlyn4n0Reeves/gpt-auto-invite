@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import update, select
 from datetime import datetime
 from app import models
-from app.services.invites import InviteService
+from app.services.services.invites import InviteService
 
 
 def hash_code(code: str) -> str:

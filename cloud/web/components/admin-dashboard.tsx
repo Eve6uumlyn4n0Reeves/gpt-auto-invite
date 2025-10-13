@@ -172,6 +172,12 @@ export default function AdminDashboard() {
   const [batchLoading, setBatchLoading] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
 
+  // 批量操作支持的操作列表
+  const [supportedBatchActions, setSupportedBatchActions] = useState<{
+    codes: string[]
+    users: string[]
+  }>({ codes: [], users: [] })
+
   const [searchTerm, setSearchTerm] = useState("")
   const [filterStatus, setFilterStatus] = useState<string>("all")
   const [sortBy, setSortBy] = useState<string>("created_at")
@@ -191,12 +197,12 @@ export default function AdminDashboard() {
   const dragAndDrop = useDragAndDrop()
   const commandPalette = useCommandPalette()
 
-  const [currentTab, setCurrentTab] = useState("overview")
+  const [currentTab, setCurrentTab] = useState<string>("overview")
 
   const { isTouch } = useMobileGestures()
 
-  const performanceMetrics = usePerformanceMonitor()
-  const { get: getCachedData, set: setCachedData, clear: clearCache } = useCache()
+  const performanceMetrics = usePerformanceMonitor("AdminDashboard")
+  const statsCache = useCache<StatsData>()
 
   const debouncedSearchTerm = useDebouncedValue(searchTerm, 300)
 
@@ -456,6 +462,24 @@ export default function AdminDashboard() {
   }, [])
 
   useEffect(() => {
+    if (authenticated) {
+      loadSupportedBatchActions()
+    }
+  }, [authenticated])
+
+  const loadSupportedBatchActions = async () => {
+    try {
+      const response = await fetch('/api/admin/batch/supported-actions')
+      if (response.ok) {
+        const data = await response.json()
+        setSupportedBatchActions(data)
+      }
+    } catch (error) {
+      console.error('Failed to load supported batch actions:', error)
+    }
+  }
+
+  useEffect(() => {
     if (autoRefresh && authenticated) {
       const interval = setInterval(() => {
         loadStats()
@@ -472,7 +496,7 @@ export default function AdminDashboard() {
 
   // 进入兑换码相关页面时自动加载一次
   useEffect(() => {
-    if (authenticated && (currentTab === "codes" || currentTab === "codes-status") && codes.length === 0 && !codesLoading) {
+    if (authenticated && ["codes", "codes-status"].includes(currentTab) && codes.length === 0 && !codesLoading) {
       loadCodes()
     }
   }, [authenticated, currentTab])
@@ -646,21 +670,14 @@ export default function AdminDashboard() {
   const loadStats = async () => {
     setStatsLoading(true)
 
-    // Check cache first
-    const cachedStats = getCachedData("admin-stats")
-    if (cachedStats && Date.now() - cachedStats.timestamp < 30000) {
-      // 30 second cache
-      setStats(cachedStats.data)
-      setStatsLoading(false)
-      return
-    }
+    // Cache is handled automatically by useCache hook based on TTL
 
     try {
       const response = await fetch("/api/admin/stats")
       if (response.ok) {
         const data = await response.json()
         setStats(data)
-        setCachedData("admin-stats", data) // Cache the data
+        statsCache.set("admin-stats", data) // Cache the data
         setServiceStatus({
           backend: "online",
           lastCheck: new Date(),
@@ -882,10 +899,10 @@ export default function AdminDashboard() {
 
     setBatchLoading(true)
     try {
-      const endpoint = selectedUsers.length > 0 ? "/api/admin/batch/users" : "/api/admin/batch/codes"
+      const type = selectedUsers.length > 0 ? "users" : "codes"
       const ids = selectedUsers.length > 0 ? selectedUsers : selectedCodes
 
-      const response = await fetch(endpoint, {
+      const response = await fetch(`/api/admin/batch/${type}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -899,7 +916,21 @@ export default function AdminDashboard() {
 
       if (response.ok) {
         const data = await response.json()
-        alert(`批量操作完成: ${data.message}`)
+
+        // 使用新的统一响应格式
+        if (data.success) {
+          notifications.addNotification({
+            type: "success",
+            title: "批量操作完成",
+            message: data.message || "操作成功",
+          })
+        } else {
+          notifications.addNotification({
+            type: "warning",
+            title: "批量操作完成",
+            message: data.message || "操作完成",
+          })
+        }
 
         // Refresh data and clear selections
         if (selectedUsers.length > 0) {
@@ -913,7 +944,7 @@ export default function AdminDashboard() {
         loadStats()
       } else {
         const errorData = await response.json()
-        setError(errorData.message || "批量操作失败")
+        setError(errorData.message || errorData.detail || "批量操作失败")
       }
     } catch (error) {
       setError("批量操作失败")
@@ -1104,13 +1135,13 @@ export default function AdminDashboard() {
 
   const userTableColumns = [
     {
-      key: "email",
+      key: "email" as keyof UserData,
       label: "邮箱",
       mobile: { priority: "high" as const },
       render: (value: string) => <span className="font-medium text-foreground">{value}</span>,
     },
     {
-      key: "status",
+      key: "status" as keyof UserData,
       label: "状态",
       mobile: { priority: "medium" as const, label: "状态" },
       render: (value: string) => (
@@ -1120,19 +1151,19 @@ export default function AdminDashboard() {
       ),
     },
     {
-      key: "team_name",
+      key: "team_name" as keyof UserData,
       label: "团队",
       mobile: { priority: "medium" as const, label: "团队" },
       render: (value: string) => value || "未分配",
     },
     {
-      key: "code_used",
+      key: "code_used" as keyof UserData,
       label: "兑换码",
       mobile: { priority: "low" as const },
       render: (value: string) => value || "无",
     },
     {
-      key: "invited_at",
+      key: "invited_at" as keyof UserData,
       label: "邀请时间",
       mobile: { priority: "low" as const },
       render: (value: string) => formatDate(value),
@@ -1347,7 +1378,7 @@ export default function AdminDashboard() {
               </div>
 
               <div className="flex items-center space-x-2 px-3 py-2 rounded-full bg-background/50 border border-border/40">
-                <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} size="sm" />
+                <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
                 <span className="text-xs text-muted-foreground">自动刷新</span>
               </div>
 
@@ -1531,10 +1562,9 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        {process.env.NODE_ENV === "development" && performanceMetrics && (
+        {process.env.NODE_ENV === "development" && performanceMetrics.metrics && (
           <div className="mb-4 p-2 bg-muted/50 rounded text-xs text-muted-foreground">
-            FPS: {performanceMetrics.fps} | Memory: {performanceMetrics.memory}MB | Render Time:{" "}
-            {performanceMetrics.renderTime}ms
+            Render Time: {performanceMetrics.metrics.renderTime}ms | Rerenders: {performanceMetrics.metrics.reRenderCount} | Components: {performanceMetrics.metrics.componentCount}
           </div>
         )}
 
@@ -1543,7 +1573,7 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">用户管理</h2>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => clearCache()} className="hidden sm:flex">
+                <Button variant="outline" size="sm" onClick={() => statsCache.clear()} className="hidden sm:flex">
                   清除缓存
                 </Button>
                 <Button
@@ -1559,26 +1589,71 @@ export default function AdminDashboard() {
               </div>
             </div>
 
+            {/* 批量操作UI */}
+            {selectedUsers.length > 0 && (
+              <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-medium">
+                        已选择 {selectedUsers.length} 个用户
+                      </span>
+                      <select
+                        value={batchOperation}
+                        onChange={(e) => setBatchOperation(e.target.value)}
+                        className={`px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
+                      >
+                        <option value="">选择操作</option>
+                        {supportedBatchActions.users.map((action) => (
+                          <option key={action} value={action}>
+                            {action === "resend" ? "重发邀请" :
+                             action === "cancel" ? "取消邀请" :
+                             action === "remove" ? "移除成员" : action}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSelectedUsers([])}
+                      >
+                        取消选择
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={executeBatchOperation}
+                        disabled={!batchOperation || batchLoading}
+                        className="bg-primary hover:bg-primary/90"
+                      >
+                        {batchLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                            执行中...
+                          </>
+                        ) : (
+                          "执行操作"
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {filteredUsers.length > 100 ? (
               <VirtualTable
                 data={filteredUsers}
                 columns={userTableColumns}
-                onRowAction={(action, user) => {
-                  if (action === "menu") {
-                    const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
-                    handleUserContextMenu(mockEvent, user)
-                  }
-                }}
-                loading={usersLoading}
-                emptyMessage="暂无用户数据"
+                height={containerHeight}
                 itemHeight={itemHeight}
-                containerHeight={containerHeight}
               />
             ) : (
               <MobileOptimizedTable
                 data={filteredUsers}
                 columns={userTableColumns}
-                onRowAction={(action, user) => {
+                onRowAction={(action: string, user: UserData) => {
                   if (action === "menu") {
                     const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
                     handleUserContextMenu(mockEvent, user)
@@ -1596,7 +1671,7 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">兑换码管理</h2>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => clearCache()} className="hidden sm:flex">
+                <Button variant="outline" size="sm" onClick={() => statsCache.clear()} className="hidden sm:flex">
                   清除缓存
                 </Button>
                 <Button
@@ -1611,6 +1686,57 @@ export default function AdminDashboard() {
                 </Button>
               </div>
             </div>
+
+            {/* 批量操作UI */}
+            {selectedCodes.length > 0 && (
+              <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-medium">
+                        已选择 {selectedCodes.length} 个兑换码
+                      </span>
+                      <select
+                        value={batchOperation}
+                        onChange={(e) => setBatchOperation(e.target.value)}
+                        className={`px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
+                      >
+                        <option value="">选择操作</option>
+                        {supportedBatchActions.codes.map((action) => (
+                          <option key={action} value={action}>
+                            {action === "disable" ? "禁用兑换码" : action}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSelectedCodes([])}
+                      >
+                        取消选择
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={executeBatchOperation}
+                        disabled={!batchOperation || batchLoading}
+                        className="bg-primary hover:bg-primary/90"
+                      >
+                        {batchLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                            执行中...
+                          </>
+                        ) : (
+                          "执行操作"
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card id="generate-codes-section" className="border-border/40 bg-card/50 backdrop-blur-sm">
               <CardHeader>
@@ -1671,7 +1797,7 @@ export default function AdminDashboard() {
               <VirtualTable
                 data={filteredCodes}
                 columns={codeTableColumns}
-                onRowAction={(action, code) => {
+                onRowAction={(action: string, code: CodeData) => {
                   if (action === "menu") {
                     const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
                     handleCodeContextMenu(mockEvent, code)
@@ -1686,7 +1812,7 @@ export default function AdminDashboard() {
           <MobileOptimizedTable
             data={filteredCodes}
             columns={codeTableColumns}
-            onRowAction={(action, code) => {
+            onRowAction={(action: string, code: CodeData) => {
               if (action === "menu") {
                 const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
                 handleCodeContextMenu(mockEvent, code)
@@ -1697,7 +1823,7 @@ export default function AdminDashboard() {
           />
         )}
 
-        {currentTab === "codes-status" && (
+        {(currentTab as string) === "codes-status" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">兑换码状态总览</h2>
@@ -1792,7 +1918,7 @@ export default function AdminDashboard() {
               <VirtualTable
                 data={filteredCodesStatus}
                 columns={codeTableColumns}
-                onRowAction={(action, code) => {
+                onRowAction={(action: string, code: CodeData) => {
                   if (action === "menu") {
                     const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
                     handleCodeContextMenu(mockEvent, code)
@@ -1807,7 +1933,7 @@ export default function AdminDashboard() {
               <MobileOptimizedTable
                 data={filteredCodesStatus}
                 columns={codeTableColumns}
-                onRowAction={(action, code) => {
+                onRowAction={(action: string, code: CodeData) => {
                   if (action === "menu") {
                     const mockEvent = { clientX: 0, clientY: 0, preventDefault: () => {} } as React.MouseEvent
                     handleCodeContextMenu(mockEvent, code)

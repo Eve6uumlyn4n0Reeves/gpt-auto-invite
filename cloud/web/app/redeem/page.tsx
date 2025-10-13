@@ -1,4 +1,4 @@
-import RedeemForm from "@/components/redeem-form"
+import { RedeemFormEnhanced } from "@/components/redeem-form-enhanced"
 
 export default function RedeemPage() {
   return (
@@ -57,7 +57,7 @@ export default function RedeemPage() {
             </div>
           </div>
 
-          <RedeemForm />
+          <RedeemFormEnhanced />
 
           <div className="mt-12 space-y-4 animate-fade-in">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

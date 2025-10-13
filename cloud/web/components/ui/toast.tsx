@@ -4,14 +4,17 @@ import * as React from "react"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-interface ToastProps {
+export interface ToastProps {
   title?: string
   description?: string
   variant?: "default" | "success" | "error" | "warning"
   onClose?: () => void
+  children?: React.ReactNode
 }
 
-export function Toast({ title, description, variant = "default", onClose }: ToastProps) {
+export type ToastActionElement = React.ReactElement<any, string | React.JSXElementConstructor<any>>
+
+export function Toast({ title, description, variant = "default", onClose, children }: ToastProps) {
   const [isVisible, setIsVisible] = React.useState(true)
 
   React.useEffect(() => {
@@ -43,6 +46,7 @@ export function Toast({ title, description, variant = "default", onClose }: Toas
         <div className="flex-1">
           {title && <div className="font-medium text-sm mb-1">{title}</div>}
           {description && <div className="text-sm opacity-90">{description}</div>}
+          {children}
         </div>
         <button
           onClick={() => {
@@ -55,5 +59,43 @@ export function Toast({ title, description, variant = "default", onClose }: Toas
         </button>
       </div>
     </div>
+  )
+}
+
+export function ToastClose({ className, ...props }: React.ComponentProps<"button">) {
+  return (
+    <button
+      className={cn(
+        "absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100",
+        className
+      )}
+      {...props}
+    >
+      <X className="h-4 w-4" />
+    </button>
+  )
+}
+
+export function ToastDescription({ className, ...props }: React.ComponentProps<"div">) {
+  return <div className={cn("text-sm opacity-90", className)} {...props} />
+}
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  return <>{children}</>
+}
+
+export function ToastTitle({ className, ...props }: React.ComponentProps<"div">) {
+  return <div className={cn("font-medium text-sm", className)} {...props} />
+}
+
+export function ToastViewport({ className, ...props }: React.ComponentProps<"ol">) {
+  return (
+    <ol
+      className={cn(
+        "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+        className
+      )}
+      {...props}
+    />
   )
 }

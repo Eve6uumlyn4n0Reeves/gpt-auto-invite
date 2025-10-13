@@ -22,6 +22,18 @@ class Settings:
     max_login_attempts: int = int(os.getenv("MAX_LOGIN_ATTEMPTS", "5"))
     login_lockout_duration: int = int(os.getenv("LOGIN_LOCKOUT_DURATION", "300"))  # 5分钟
     session_timeout_warning: int = int(os.getenv("SESSION_TIMEOUT_WARNING", "300"))  # 会话到期前提示秒数
+    domain: str = os.getenv("DOMAIN", "localhost")  # 用于CSRF和安全头部验证
+
+    # Redis配置
+    redis_host: str = os.getenv("REDIS_HOST", "localhost")
+    redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
+    redis_password: str | None = os.getenv("REDIS_PASSWORD")
+    redis_db: int = int(os.getenv("REDIS_DB", "0"))
+    redis_url: str = os.getenv("REDIS_URL", f"redis://{redis_host}:{redis_port}/{redis_db}")
+
+    # 限流配置
+    rate_limit_enabled: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    rate_limit_namespace: str = os.getenv("RATE_LIMIT_NAMESPACE", "gpt_invite:rate")
 
     @property
     def encryption_key(self) -> bytes:

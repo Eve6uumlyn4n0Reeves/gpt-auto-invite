@@ -1,0 +1,87 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.idea/
+.vscode/
+.history/
+*.swp
+*.swo
+*~
+*.iml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.venv/
+.venv*/
+venv/
+env/
+__pypackages__/
+*.egg-info/
+*.egg
+build/
+dist/
+pip-wheel-metadata/
+.tox/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# App data / local databases
+cloud/backend/app/data/
+cloud/backend/data/
+cloud/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / Next.js
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+.vercel/
+.turbo/
+.next/
+out/
+dist/
+*.log
+
+# TS/JS build caches
+*.tsbuildinfo
+cloud/web/tsconfig.tsbuildinfo
+coverage-final.json
+lcov.info
+.cache/
+
+# Env files
+.env
+.env.*
+*.local
+.envrc
+.direnv/
+docker-compose.override.yml
+
+# E2E / Playwright
+playwright-report/
+test-results/
+.playwright/
+
+# SSL / Certificates (keep folder, ignore contents)
+cloud/ssl/*
+!cloud/ssl/.gitkeep
+
+# Logs
+cloud/backend/logs/
+cloud/logs/

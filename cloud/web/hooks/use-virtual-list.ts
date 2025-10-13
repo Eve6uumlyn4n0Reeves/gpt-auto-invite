@@ -1,27 +1,5 @@
 "use client"
 
-import type React from "react"
-
-interface VirtualListOptions {
-  itemHeight: number
-  containerHeight: number
-  overscan?: number
-  scrollingDelay?: number
-}
-
-interface VirtualListItem {
-  index: number
-  start: number
-  end: number
-}
-
-export function useVirtualList<T>(
-  items: T[],\
-  options: VirtualListOptionw I'll implement the final task - performance enhancements including caching, lazy loading, virtualization, and optimization hooks:
-\
-<CodeProject id="gpt-invite" taskNameActive="Implementing performance enhancements" taskNameComplete="Implemented performance enhancements">
-
-```tsx file="gptautoinvite/hooks/use-virtual-list.ts"
 import { useState, useEffect, useMemo, useCallback } from "react"
 
 interface VirtualListOptions {

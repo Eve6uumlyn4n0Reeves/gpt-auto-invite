@@ -7,7 +7,7 @@ interface ContextMenuItem {
   id: string
   label: string
   icon?: React.ReactNode
-  action: () => void
+  action?: () => void
   disabled?: boolean
   separator?: boolean
   shortcut?: string
@@ -41,7 +41,7 @@ export function ContextMenu({ isOpen, position, items, onItemClick, menuRef }: C
               <div className="h-px bg-border my-1" />
             ) : (
               <button
-                onClick={() => onItemClick(item)}
+                onClick={() => item.action && onItemClick(item)}
                 disabled={item.disabled}
                 className={cn(
                   "w-full flex items-center justify-between px-3 py-2 text-sm rounded-md transition-colors",

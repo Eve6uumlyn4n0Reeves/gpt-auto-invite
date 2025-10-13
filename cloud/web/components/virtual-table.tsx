@@ -6,7 +6,7 @@ import { useMemo } from "react"
 import { useVirtualList } from "@/hooks/use-virtual-list"
 
 interface VirtualTableColumn<T> {
-  key: keyof T
+  key: keyof T | string
   label: string
   width?: number
   render?: (value: any, row: T, index: number) => React.ReactNode
@@ -15,23 +15,33 @@ interface VirtualTableColumn<T> {
 interface VirtualTableProps<T> {
   data: T[]
   columns: VirtualTableColumn<T>[]
-  height: number
+  height?: number
+  containerHeight?: number
   itemHeight?: number
   onRowClick?: (row: T, index: number) => void
+  onRowAction?: (action: string, row: T) => void
   className?: string
+  loading?: boolean
+  emptyMessage?: string
 }
 
 export function VirtualTable<T extends Record<string, any>>({
   data,
   columns,
   height,
+  containerHeight,
   itemHeight = 50,
   onRowClick,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onRowAction,
   className = "",
+  loading = false,
+  emptyMessage = "暂无数据",
 }: VirtualTableProps<T>) {
+  const effectiveHeight = height ?? containerHeight ?? 400
   const { totalHeight, visibleItems, handleScroll, isScrolling } = useVirtualList(data, {
     itemHeight,
-    containerHeight: height,
+    containerHeight: effectiveHeight,
     overscan: 5,
   })
 
@@ -43,6 +53,22 @@ export function VirtualTable<T extends Record<string, any>>({
 
     return columns.map((col) => (col.width ? (col.width / window.innerWidth) * 100 : defaultWidth))
   }, [columns])
+
+  if (loading) {
+    return (
+      <div className={`border border-border/40 rounded-lg overflow-hidden ${className}`}>
+        <div className="p-4 text-sm text-muted-foreground">加载中...</div>
+      </div>
+    )
+  }
+
+  if (!loading && data.length === 0) {
+    return (
+      <div className={`border border-border/40 rounded-lg overflow-hidden ${className}`}>
+        <div className="p-8 text-center text-sm text-muted-foreground">{emptyMessage}</div>
+      </div>
+    )
+  }
 
   return (
     <div className={`border border-border/40 rounded-lg overflow-hidden ${className}`}>
@@ -62,7 +88,7 @@ export function VirtualTable<T extends Record<string, any>>({
       </div>
 
       {/* Virtual Scrolling Container */}
-      <div className="overflow-auto" style={{ height }} onScroll={handleScroll}>
+      <div className="overflow-auto" style={{ height: effectiveHeight }} onScroll={handleScroll}>
         <div style={{ height: totalHeight, position: "relative" }}>
           {visibleItems.map(({ index, start }) => {
             const row = data[index]

@@ -17,6 +17,8 @@ from app.schemas import (
     AdminChangePasswordIn,
     MotherTeamsUpdateIn,
     BatchOpIn,
+    BatchOpOut,
+    BatchOperationSupportedActions,
     MotherBatchItemIn,
     MotherBatchValidateItemOut,
     MotherBatchImportItemResult,
@@ -34,13 +36,16 @@ from app.security import (
     record_login_attempt,
     get_security_headers,
 )
+from app.utils.csrf import generate_csrf_token_for_session, require_csrf_token
 from app.provider import fetch_session_via_cookie
-from app.services.admin import create_or_update_admin_default, list_mothers_with_usage, create_mother
-from app.services.redeem import generate_codes
-from app.services.invites import resend_invite, cancel_invite, remove_member
+from app.services.services.admin import create_or_update_admin_default, list_mothers_with_usage, create_mother
+from app.services.services.redeem import generate_codes
+from app.services.services.invites import resend_invite, cancel_invite, remove_member
 from app.config import settings
-from app.services import audit as audit_svc
-from app.utils.rate_limit import SimpleRateLimiter
+from app.services.services import audit as audit_svc
+from app.services.services.rate_limiter_service import get_rate_limiter, ip_strategy
+from app.utils.utils.rate_limiter.fastapi_integration import rate_limit
+from app.utils.performance import monitor_session_queries, query_monitor, log_performance_summary
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -72,21 +77,35 @@ def require_admin(request: Request, db: Session = Depends(get_db)):
     db.commit()
 
 
-# 基础限流
-login_rl = SimpleRateLimiter(10, 60)
-admin_ops_rl = SimpleRateLimiter(60, 60)
+async def get_admin_rate_limiter():
+    """获取管理员限流器"""
+    return await get_rate_limiter()
+
+
+async def admin_login_rate_limit_dep(request: Request, limiter = Depends(get_admin_rate_limiter)):
+    """管理员登录限流依赖"""
+    return rate_limit(limiter, ip_strategy, config_id="admin:by_ip")(request)
+
+
+async def admin_ops_rate_limit_dep(request: Request, limiter = Depends(get_admin_rate_limiter)):
+    """管理员操作限流依赖"""
+    return rate_limit(limiter, ip_strategy, config_id="admin:by_ip")(request)
 
 
 @router.post("/login")
-def admin_login(payload: AdminLoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+async def admin_login(
+    payload: AdminLoginIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_login_rate_limit_dep)
+):
+    """管理员登录 - 限流：每分钟100次（按IP）"""
     ip = request.client.host if request.client else "_"
 
     if not check_login_attempts(ip):
         remaining = get_lockout_remaining(ip)
         raise HTTPException(status_code=429, detail=f"登录尝试过多，请等待 {remaining} 秒后重试")
-
-    if not login_rl.allow(f"login:{ip}"):
-        raise HTTPException(status_code=429, detail="尝试过于频繁")
 
     row = db.query(models.AdminConfig).first()
     if not row:
@@ -117,9 +136,18 @@ def admin_login(payload: AdminLoginIn, request: Request, response: Response, db:
     db.commit()
 
     token = sign_session(sid)
-    cookie_kwargs = {"httponly": True}
+    cookie_kwargs = {
+        "httponly": True,
+        "path": "/",
+        "max_age": settings.admin_session_ttl_seconds,
+    }
+
     if settings.env in ("prod", "production"):
-        cookie_kwargs.update({"secure": True, "samesite": "strict"})
+        cookie_kwargs.update({
+            "secure": True,
+            "samesite": "strict",
+            "domain": f".{settings.domain}" if settings.domain != "localhost" else None
+        })
     else:
         cookie_kwargs.update({"samesite": "lax"})
 
@@ -135,7 +163,7 @@ def admin_login(payload: AdminLoginIn, request: Request, response: Response, db:
         ip=request.client.host if request.client else None,
         ua=request.headers.get("user-agent"),
     )
-    return {"ok": True}
+    return {"success": True, "message": "登录成功"}
 
 
 @router.post("/mothers/batch/import-text")
@@ -194,8 +222,19 @@ def admin_logout(request: Request, response: Response, db: Session = Depends(get
             db.add(row)
             db.commit()
 
-    response.delete_cookie("admin_session")
-    return {"ok": True}
+    # 安全删除cookie，包含所有必要的属性
+    delete_kwargs = {"path": "/", "httponly": True}
+    if settings.env in ("prod", "production"):
+        delete_kwargs.update({
+            "secure": True,
+            "samesite": "strict",
+            "domain": f".{settings.domain}" if settings.domain != "localhost" else None
+        })
+    else:
+        delete_kwargs.update({"samesite": "lax"})
+
+    response.delete_cookie("admin_session", **delete_kwargs)
+    return {"success": True, "message": "已退出登录"}
 
 
 @router.post("/logout-all")
@@ -203,11 +242,13 @@ def admin_logout_all(request: Request, db: Session = Depends(get_db)):
     require_admin(request, db)
     # 撤销全部会话
     q = db.query(models.AdminSession).filter(models.AdminSession.revoked == False)  # noqa: E712
+    count = 0
     for row in q.all():
         row.revoked = True
         db.add(row)
+        count += 1
     db.commit()
-    return {"ok": True}
+    return {"success": True, "message": f"已撤销 {count} 个会话"}
 
 
 @router.get("/me", response_model=AdminMeOut)
@@ -228,12 +269,37 @@ def admin_me(request: Request, db: Session = Depends(get_db)):
     return AdminMeOut(authenticated=True)
 
 
+@router.get("/csrf-token")
+def get_csrf_token(request: Request, db: Session = Depends(get_db)):
+    """获取CSRF token"""
+    sess = request.cookies.get("admin_session")
+    if not sess or not verify_session(sess, max_age_seconds=settings.admin_session_ttl_seconds):
+        raise HTTPException(status_code=401, detail="未认证")
+
+    sid = unsign_session(sess, max_age_seconds=settings.admin_session_ttl_seconds)
+    if not sid:
+        raise HTTPException(status_code=401, detail="未认证")
+
+    row = db.query(models.AdminSession).filter(models.AdminSession.session_id == sid).first()
+    now = __import__("datetime").datetime.utcnow()
+    if not row or row.revoked or row.expires_at <= now:
+        raise HTTPException(status_code=401, detail="未认证")
+
+    # 生成CSRF token
+    csrf_token = generate_csrf_token_for_session(sid)
+
+    return {"csrf_token": csrf_token}
+
+
 @router.post("/import-cookie", response_model=ImportCookieOut)
-def import_cookie(payload: ImportCookieIn, request: Request, db: Session = Depends(get_db)):
+async def import_cookie(
+    payload: ImportCookieIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep)
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"import:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    require_csrf_token(request)
 
     try:
         from datetime import datetime, timedelta
@@ -256,11 +322,14 @@ def import_cookie(payload: ImportCookieIn, request: Request, db: Session = Depen
 
 
 @router.post("/mothers")
-def create_mother_account(payload: MotherCreateIn, request: Request, db: Session = Depends(get_db)):
+async def create_mother_account(
+    payload: MotherCreateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep)
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"create_mother:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    require_csrf_token(request)
 
     try:
         mother = create_mother(
@@ -284,11 +353,14 @@ def list_mothers(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/codes", response_model=BatchCodesOut)
-def generate_batch_codes(payload: BatchCodesIn, request: Request, db: Session = Depends(get_db)):
+async def generate_batch_codes(
+    payload: BatchCodesIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep)
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"gen_codes:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    require_csrf_token(request)
 
     # 配额限制：可兑换额度 = 空位数 - 未过期未使用兑换码（确保兑换码与位置数量恒定）
     from sqlalchemy import and_, exists
@@ -342,105 +414,148 @@ def generate_batch_codes(payload: BatchCodesIn, request: Request, db: Session = 
 
 @router.get("/export/codes")
 def export_codes(request: Request, db: Session = Depends(get_db), format: str = "csv", status: str = "all"):
-    """导出兑换码列表
+    """导出兑换码列表 - 优化N+1查询
     - format: csv | txt
     - status: all | unused | used
     """
     require_admin(request, db)
 
-    q = db.query(models.RedeemCode).order_by(models.RedeemCode.created_at.desc())
-    if status == "unused":
-        q = q.filter(models.RedeemCode.status == models.CodeStatus.unused)
-    elif status == "used":
-        q = q.filter(models.RedeemCode.status == models.CodeStatus.used)
+    with monitor_session_queries(db, "admin_export_codes"):
+        q = db.query(models.RedeemCode).order_by(models.RedeemCode.created_at.desc())
+        if status == "unused":
+            q = q.filter(models.RedeemCode.status == models.CodeStatus.unused)
+        elif status == "used":
+            q = q.filter(models.RedeemCode.status == models.CodeStatus.used)
 
-    rows = q.all()
+        rows = q.all()
 
-    if format == "txt":
-        # txt 仅导出码本身（常见于批量分发场景）
-        content = "\n".join([r.code for r in rows])
-        headers = {"Content-Disposition": f"attachment; filename=codes-{__import__('datetime').datetime.utcnow().date()}.txt"}
-        from fastapi.responses import PlainTextResponse
-        return PlainTextResponse(content, headers=headers)
+        if format == "txt":
+            # txt 仅导出码本身（常见于批量分发场景）
+            content = "\n".join([r.code for r in rows])
+            headers = {"Content-Disposition": f"attachment; filename=codes-{__import__('datetime').datetime.utcnow().date()}.txt"}
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content, headers=headers)
 
-    # 默认 CSV（不包含 expires_at）
-    import io, csv
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["code", "batch_id", "is_used", "created_at", "used_by", "used_at"])
-    for r in rows:
-        # 找到使用信息
-        user = db.query(models.InviteRequest).filter(models.InviteRequest.code_id == r.id).first()
-        writer.writerow([
-            r.code,
-            r.batch_id or "",
-            "1" if r.is_used else "0",
-            r.created_at.isoformat() if r.created_at else "",
-            user.email if user else "",
-            user.updated_at.isoformat() if user and r.is_used and user.updated_at else "",
-        ])
+        # 优化N+1查询：一次性预加载所有使用信息
+        import io, csv
 
-    from fastapi.responses import Response
-    headers = {"Content-Disposition": f"attachment; filename=codes-{__import__('datetime').datetime.utcnow().date()}.csv"}
-    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+        if rows:
+            # 收集所有兑换码ID
+            code_ids = [r.id for r in rows]
+
+            # 批量查询使用信息
+            users_map = {}
+            if code_ids:
+                users = db.query(models.InviteRequest).filter(models.InviteRequest.code_id.in_(code_ids)).all()
+                # 对于每个兑换码，选择优先状态为sent的用户，否则选择最新的
+                for user in users:
+                    if user.code_id not in users_map:
+                        users_map[user.code_id] = user
+                    else:
+                        existing = users_map[user.code_id]
+                        # 优先选择sent状态的，否则选择更新的
+                        if (user.status == models.InviteStatus.sent and existing.status != models.InviteStatus.sent) or \
+                           (user.status == existing.status and
+                            (user.updated_at or user.created_at) > (existing.updated_at or existing.created_at)):
+                            users_map[user.code_id] = user
+
+        # 默认 CSV（不包含 expires_at）
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["code", "batch_id", "is_used", "created_at", "used_by", "used_at"])
+        for r in rows:
+            user = users_map.get(r.id)
+            writer.writerow([
+                r.code,
+                r.batch_id or "",
+                "1" if r.is_used else "0",
+                r.created_at.isoformat() if r.created_at else "",
+                user.email if user else "",
+                user.updated_at.isoformat() if user and r.is_used and user.updated_at else "",
+            ])
+
+        from fastapi.responses import Response
+        headers = {"Content-Disposition": f"attachment; filename=codes-{__import__('datetime').datetime.utcnow().date()}.csv"}
+        return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @router.get("/export/users")
 def export_users(request: Request, db: Session = Depends(get_db), format: str = "csv"):
-    """导出用户/邀请列表
+    """导出用户/邀请列表 - 优化N+1查询
     - format: csv | txt
     """
     require_admin(request, db)
 
-    rows = db.query(models.InviteRequest).order_by(models.InviteRequest.created_at.desc()).all()
+    with monitor_session_queries(db, "admin_export_users"):
+        rows = db.query(models.InviteRequest).order_by(models.InviteRequest.created_at.desc()).all()
 
-    if format == "txt":
-        # 简单文本：email, team_id, status
-        lines: list[str] = []
+        if format == "txt":
+            # 简单文本：email, team_id, status
+            lines: list[str] = []
+            for u in rows:
+                lines.append(f"{u.email}\t{u.team_id or ''}\t{u.status.value}")
+            content = "\n".join(lines)
+            headers = {"Content-Disposition": f"attachment; filename=users-{__import__('datetime').datetime.utcnow().date()}.txt"}
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content, headers=headers)
+
+        # 优化N+1查询：一次性预加载所有关联数据
+        import io, csv
+        from sqlalchemy.orm import joinedload
+
+        # 收集所有需要的数据ID
+        code_ids = [u.code_id for u in rows if u.code_id]
+        team_ids = set(u.team_id for u in rows if u.team_id)
+
+        # 批量查询兑换码
+        codes_map = {}
+        if code_ids:
+            codes = db.query(models.RedeemCode).filter(models.RedeemCode.id.in_(code_ids)).all()
+            codes_map = {code.id: code for code in codes}
+
+        # 批量查询团队信息
+        teams_map = {}
+        if team_ids:
+            teams = db.query(models.MotherTeam).filter(models.MotherTeam.team_id.in_(team_ids)).all()
+            teams_map = {team.team_id: team for team in teams}
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "email", "status", "team_id", "team_name", "invited_at", "redeemed_at", "code_used"])
+
         for u in rows:
-            lines.append(f"{u.email}\t{u.team_id or ''}\t{u.status.value}")
-        content = "\n".join(lines)
-        headers = {"Content-Disposition": f"attachment; filename=users-{__import__('datetime').datetime.utcnow().date()}.txt"}
-        from fastapi.responses import PlainTextResponse
-        return PlainTextResponse(content, headers=headers)
+            code_used = None
+            if u.code_id and u.code_id in codes_map:
+                code_used = codes_map[u.code_id].code
 
-    import io, csv
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "email", "status", "team_id", "team_name", "invited_at", "redeemed_at", "code_used"])
-    for u in rows:
-        code_used = None
-        if u.code_id:
-            code = db.query(models.RedeemCode).filter(models.RedeemCode.id == u.code_id).first()
-            if code:
-                code_used = code.code
-        team_name = None
-        if u.team_id:
-            team = db.query(models.MotherTeam).filter(models.MotherTeam.team_id == u.team_id).first()
-            if team:
-                team_name = team.team_name
-        writer.writerow([
-            u.id,
-            u.email,
-            u.status.value,
-            u.team_id or "",
-            team_name or "",
-            u.created_at.isoformat() if u.created_at else "",
-            u.updated_at.isoformat() if (u.status == models.InviteStatus.sent and u.updated_at) else "",
-            code_used or "",
-        ])
+            team_name = None
+            if u.team_id and u.team_id in teams_map:
+                team_name = teams_map[u.team_id].team_name
 
-    from fastapi.responses import Response
-    headers = {"Content-Disposition": f"attachment; filename=users-{__import__('datetime').datetime.utcnow().date()}.csv"}
-    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+            writer.writerow([
+                u.id,
+                u.email,
+                u.status.value,
+                u.team_id or "",
+                team_name or "",
+                u.created_at.isoformat() if u.created_at else "",
+                u.updated_at.isoformat() if (u.status == models.InviteStatus.sent and u.updated_at) else "",
+                code_used or "",
+            ])
+
+        from fastapi.responses import Response
+        headers = {"Content-Disposition": f"attachment; filename=users-{__import__('datetime').datetime.utcnow().date()}.csv"}
+        return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @router.post("/resend")
-def admin_resend_invite(payload: ResendIn, request: Request, db: Session = Depends(get_db)):
+async def admin_resend_invite(
+    payload: ResendIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep)
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"resend:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
 
     if not payload.team_id:
         raise HTTPException(status_code=400, detail="缺少 team_id")
@@ -522,7 +637,13 @@ def batch_mothers_import(payload: list[MotherBatchItemIn], request: Request, db:
     return results
 
 
-@router.post("/batch/codes")
+@router.get("/batch/supported-actions", response_model=BatchOperationSupportedActions)
+def get_supported_batch_actions(request: Request, db: Session = Depends(get_db)):
+    """获取支持的批量操作列表"""
+    require_admin(request, db)
+    return BatchOperationSupportedActions()
+
+@router.post("/batch/codes", response_model=BatchOpOut)
 def batch_codes(payload: BatchOpIn, request: Request, db: Session = Depends(get_db)):
     """批量操作兑换码
     body: { action: str, ids: List[int], confirm: bool }
@@ -541,7 +662,13 @@ def batch_codes(payload: BatchOpIn, request: Request, db: Session = Depends(get_
     if not action or not isinstance(ids, list):
         raise HTTPException(status_code=400, detail="参数错误")
 
+    # 验证操作是否支持
+    supported_actions = BatchOperationSupportedActions()
+    if action not in supported_actions.codes:
+        raise HTTPException(status_code=400, detail=f"不支持的兑换码操作: {action}")
+
     processed = 0
+    failed = 0
     from datetime import datetime
     if action == "disable":
         rows = db.query(models.RedeemCode).filter(models.RedeemCode.id.in_(ids)).all()
@@ -550,14 +677,21 @@ def batch_codes(payload: BatchOpIn, request: Request, db: Session = Depends(get_
                 r.expires_at = datetime.utcnow()
                 db.add(r)
                 processed += 1
+            else:
+                failed += 1
         db.commit()
         audit_svc.log(db, actor="admin", action="batch_disable_codes", payload_redacted=f"count={processed}")
-        return {"ok": True, "message": f"已禁用 {processed} 个兑换码"}
+        return BatchOpOut(
+            success=True,
+            message=f"已禁用 {processed} 个兑换码",
+            processed_count=processed,
+            failed_count=failed if failed > 0 else None
+        )
     else:
         raise HTTPException(status_code=400, detail="不支持的操作")
 
 
-@router.post("/batch/users")
+@router.post("/batch/users", response_model=BatchOpOut)
 def batch_users(payload: BatchOpIn, request: Request, db: Session = Depends(get_db)):
     """批量操作用户邀请
     body: { action: str, ids: List[int], confirm: bool }
@@ -575,6 +709,11 @@ def batch_users(payload: BatchOpIn, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="缺少确认")
     if not action or not isinstance(ids, list):
         raise HTTPException(status_code=400, detail="参数错误")
+
+    # 验证操作是否支持
+    supported_actions = BatchOperationSupportedActions()
+    if action not in supported_actions.users:
+        raise HTTPException(status_code=400, detail=f"不支持的用户操作: {action}")
 
     success = 0
     failed = 0
@@ -598,7 +737,12 @@ def batch_users(payload: BatchOpIn, request: Request, db: Session = Depends(get_
             failed += 1
 
     audit_svc.log(db, actor="admin", action=f"batch_users_{action}", payload_redacted=f"success={success}, failed={failed}")
-    return {"ok": True, "message": f"完成：成功 {success}，失败 {failed}"}
+    return BatchOpOut(
+        success=True,
+        message=f"批量操作完成：成功 {success}，失败 {failed}",
+        processed_count=success,
+        failed_count=failed if failed > 0 else None
+    )
 
 
 @router.post("/cancel-invite")
@@ -644,119 +788,148 @@ def admin_change_password(payload: AdminChangePasswordIn, request: Request, db: 
 
 @router.get("/users")
 def list_users(request: Request, db: Session = Depends(get_db)):
+    """用户列表接口 - 优化N+1查询"""
     require_admin(request, db)
 
-    users = db.query(models.InviteRequest).all()
-    result = []
+    with monitor_session_queries(db, "admin_list_users"):
+        users = db.query(models.InviteRequest).all()
 
-    for user in users:
-        code_used = None
-        if user.code_id:
-            code = db.query(models.RedeemCode).filter(models.RedeemCode.id == user.code_id).first()
-            if code:
-                code_used = code.code_hash
+        if not users:
+            return []
 
-        team_name = None
-        if user.team_id:
-            team = db.query(models.MotherTeam).filter(models.MotherTeam.team_id == user.team_id).first()
-            if team:
-                team_name = team.team_name
+        # 批量预加载关联数据，避免N+1查询
+        code_ids = [u.code_id for u in users if u.code_id]
+        team_ids = set(u.team_id for u in users if u.team_id)
 
-        result.append(
-            {
-                "id": user.id,
-                "email": user.email,
-                "status": user.status.value,
-                "team_id": user.team_id,
-                "team_name": team_name,
-                "invited_at": user.created_at.isoformat() if user.created_at else None,
-                "redeemed_at": user.updated_at.isoformat() if user.status == models.InviteStatus.sent and user.updated_at else None,
-                "code_used": code_used,
-            }
-        )
+        # 批量查询兑换码
+        codes_map = {}
+        if code_ids:
+            codes = db.query(models.RedeemCode).filter(models.RedeemCode.id.in_(code_ids)).all()
+            codes_map = {code.id: code for code in codes}
 
-    return result
+        # 批量查询团队信息
+        teams_map = {}
+        if team_ids:
+            teams = db.query(models.MotherTeam).filter(models.MotherTeam.team_id.in_(team_ids)).all()
+            teams_map = {team.team_id: team for team in teams}
+
+        result = []
+
+        for user in users:
+            code_used = None
+            if user.code_id and user.code_id in codes_map:
+                code_used = codes_map[user.code_id].code_hash
+
+            team_name = None
+            if user.team_id and user.team_id in teams_map:
+                team_name = teams_map[user.team_id].team_name
+
+            result.append(
+                {
+                    "id": user.id,
+                    "email": user.email,
+                    "status": user.status.value,
+                    "team_id": user.team_id,
+                    "team_name": team_name,
+                    "invited_at": user.created_at.isoformat() if user.created_at else None,
+                    "redeemed_at": user.updated_at.isoformat() if user.status == models.InviteStatus.sent and user.updated_at else None,
+                    "code_used": code_used,
+                }
+            )
+
+        return result
 
 
 @router.get("/codes")
 def list_codes(request: Request, db: Session = Depends(get_db)):
+    """兑换码列表接口 - 优化N+1查询"""
     require_admin(request, db)
 
-    # 取全部码
-    codes = db.query(models.RedeemCode).order_by(models.RedeemCode.created_at.desc()).all()
-    if not codes:
-        return []
+    with monitor_session_queries(db, "admin_list_codes"):
+        # 取全部码
+        codes = db.query(models.RedeemCode).order_by(models.RedeemCode.created_at.desc()).all()
+        if not codes:
+            return []
 
-    code_ids = [c.id for c in codes]
+        code_ids = [c.id for c in codes]
 
-    # 一次性取出相关邀请，按 code_id 分组，优先选择 sent 最新，否则选择最新一条
-    inv_rows = (
-        db.query(models.InviteRequest)
-        .filter(models.InviteRequest.code_id.in_(code_ids))
-        .all()
-    )
-    from collections import defaultdict
-    inv_by_code: dict[int, models.InviteRequest] = {}
-    cand_all: dict[int, models.InviteRequest] = {}
-    for inv in inv_rows:
-        cid = inv.code_id
-        if inv.status == models.InviteStatus.sent:
-            prev = inv_by_code.get(cid)
-            if (not prev) or (prev.updated_at or inv.updated_at and inv.updated_at and inv.updated_at > (prev.updated_at or inv.updated_at)):
-                inv_by_code[cid] = inv
-        prev_any = cand_all.get(cid)
-        if (not prev_any) or ((inv.created_at or inv.updated_at) and (prev_any.created_at or prev_any.updated_at) and (inv.created_at or inv.updated_at) > (prev_any.created_at or prev_any.updated_at)):
-            cand_all[cid] = inv
-    # 确定最终选用
-    for cid, any_inv in cand_all.items():
-        inv_by_code.setdefault(cid, any_inv)
-
-    # 预取母号与团队（来自 code 的去规范化字段与备选 invite）
-    mother_ids: set[int] = set()
-    team_ids: set[str] = set()
-    for c in codes:
-        if c.used_by_mother_id:
-            mother_ids.add(c.used_by_mother_id)
-        if c.used_by_team_id:
-            team_ids.add(c.used_by_team_id)
-        inv = inv_by_code.get(c.id)
-        if inv:
-            if inv.mother_id:
-                mother_ids.add(inv.mother_id)
-            if inv.team_id:
-                team_ids.add(inv.team_id)
-
-    mothers_map = {m.id: m.name for m in db.query(models.MotherAccount).filter(models.MotherAccount.id.in_(mother_ids)).all()} if mother_ids else {}
-    teams_map = {t.team_id: (t.team_name or "") for t in db.query(models.MotherTeam).filter(models.MotherTeam.team_id.in_(team_ids)).all()} if team_ids else {}
-
-    result = []
-    for code in codes:
-        inv = inv_by_code.get(code.id)
-        map_email = code.used_by_email or (inv.email if inv else None)
-        map_mother_id = code.used_by_mother_id or ((inv.mother_id) if inv else None)
-        map_team_id = code.used_by_team_id or ((inv.team_id) if inv else None)
-        mother_name = mothers_map.get(map_mother_id) if map_mother_id else None
-        team_name = teams_map.get(map_team_id) if map_team_id else None
-
-        result.append(
-            {
-                "id": code.id,
-                "code": code.code,
-                "batch_id": code.batch_id,
-                "is_used": code.is_used,
-                "expires_at": code.expires_at.isoformat() if code.expires_at else None,
-                "created_at": code.created_at.isoformat() if code.created_at else None,
-                "used_by": map_email,
-                "used_at": (code.used_at.isoformat() if code.used_at else (inv.updated_at.isoformat() if inv and code.is_used and inv.updated_at else None)),
-                "mother_id": map_mother_id,
-                "mother_name": mother_name,
-                "team_id": map_team_id,
-                "team_name": team_name,
-                "invite_status": (inv.status.value if inv else None),
-            }
+        # 一次性取出相关邀请，按 code_id 分组，优先选择 sent 最新，否则选择最新一条
+        inv_rows = (
+            db.query(models.InviteRequest)
+            .filter(models.InviteRequest.code_id.in_(code_ids))
+            .all()
         )
+        from collections import defaultdict
+        inv_by_code: dict[int, models.InviteRequest] = {}
+        cand_all: dict[int, models.InviteRequest] = {}
+        for inv in inv_rows:
+            cid = inv.code_id
+            if inv.status == models.InviteStatus.sent:
+                prev = inv_by_code.get(cid)
+                if (not prev) or (prev.updated_at or inv.updated_at and inv.updated_at and inv.updated_at > (prev.updated_at or inv.updated_at)):
+                    inv_by_code[cid] = inv
+            prev_any = cand_all.get(cid)
+            if (not prev_any) or ((inv.created_at or inv.updated_at) and (prev_any.created_at or prev_any.updated_at) and (inv.created_at or inv.updated_at) > (prev_any.created_at or prev_any.updated_at)):
+                cand_all[cid] = inv
+        # 确定最终选用
+        for cid, any_inv in cand_all.items():
+            inv_by_code.setdefault(cid, any_inv)
 
-    return result
+        # 优化：预取母号与团队（来自 code 的去规范化字段与备选 invite）
+        mother_ids: set[int] = set()
+        team_ids: set[str] = set()
+        for c in codes:
+            if c.used_by_mother_id:
+                mother_ids.add(c.used_by_mother_id)
+            if c.used_by_team_id:
+                team_ids.add(c.used_by_team_id)
+            inv = inv_by_code.get(c.id)
+            if inv:
+                if inv.mother_id:
+                    mother_ids.add(inv.mother_id)
+                if inv.team_id:
+                    team_ids.add(inv.team_id)
+
+        # 批量查询母号和团队信息
+        mothers_map = {}
+        teams_map = {}
+
+        if mother_ids:
+            mothers = db.query(models.MotherAccount).filter(models.MotherAccount.id.in_(mother_ids)).all()
+            mothers_map = {m.id: m.name for m in mothers}
+
+        if team_ids:
+            teams = db.query(models.MotherTeam).filter(models.MotherTeam.team_id.in_(team_ids)).all()
+            teams_map = {t.team_id: (t.team_name or "") for t in teams}
+
+        result = []
+        for code in codes:
+            inv = inv_by_code.get(code.id)
+            map_email = code.used_by_email or (inv.email if inv else None)
+            map_mother_id = code.used_by_mother_id or ((inv.mother_id) if inv else None)
+            map_team_id = code.used_by_team_id or ((inv.team_id) if inv else None)
+            mother_name = mothers_map.get(map_mother_id) if map_mother_id else None
+            team_name = teams_map.get(map_team_id) if map_team_id else None
+
+            result.append(
+                {
+                    "id": code.id,
+                    "code": code.code,
+                    "batch_id": code.batch_id,
+                    "is_used": code.is_used,
+                    "expires_at": code.expires_at.isoformat() if code.expires_at else None,
+                    "created_at": code.created_at.isoformat() if code.created_at else None,
+                    "used_by": map_email,
+                    "used_at": (code.used_at.isoformat() if code.used_at else (inv.updated_at.isoformat() if inv and code.is_used and inv.updated_at else None)),
+                    "mother_id": map_mother_id,
+                    "mother_name": mother_name,
+                    "team_id": map_team_id,
+                    "team_name": team_name,
+                    "invite_status": (inv.status.value if inv else None),
+                }
+            )
+
+        return result
 
 
 @router.post("/codes/{code_id}/disable")
@@ -889,3 +1062,45 @@ def delete_mother(mother_id: int, request: Request, db: Session = Depends(get_db
 
     audit_svc.log(db, actor="admin", action="delete_mother", target_type="mother", target_id=str(mother_id))
     return {"ok": True, "message": "母号删除成功"}
+
+
+@router.get("/performance/stats")
+def performance_stats(request: Request, db: Session = Depends(get_db)):
+    """获取查询性能统计信息"""
+    require_admin(request, db)
+
+    stats = query_monitor.get_stats()
+    slow_queries = query_monitor.get_slow_queries()
+
+    return {
+        "total_operations": len(stats),
+        "operations": stats,
+        "slow_queries": slow_queries,
+        "enabled": query_monitor.enabled
+    }
+
+
+@router.post("/performance/reset")
+def reset_performance_stats(request: Request, db: Session = Depends(get_db)):
+    """重置性能统计信息"""
+    require_admin(request, db)
+
+    query_monitor.reset_stats()
+    audit_svc.log(db, actor="admin", action="reset_performance_stats")
+    return {"ok": True, "message": "性能统计已重置"}
+
+
+@router.post("/performance/toggle")
+def toggle_performance_monitoring(request: Request, db: Session = Depends(get_db)):
+    """开启/关闭性能监控"""
+    require_admin(request, db)
+
+    if query_monitor.enabled:
+        query_monitor.disable()
+        status = "已关闭"
+    else:
+        query_monitor.enable()
+        status = "已开启"
+
+    audit_svc.log(db, actor="admin", action="toggle_performance_monitoring", payload_redacted=f"status={status}")
+    return {"ok": True, "message": f"性能监控{status}", "enabled": query_monitor.enabled}

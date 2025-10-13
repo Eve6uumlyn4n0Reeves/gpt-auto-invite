@@ -1,0 +1,308 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('cloud/backend/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        cd cloud/backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+
+    - name: Set environment variables
+      run: |
+        cd cloud/backend
+        echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/test_db" >> .env.test
+        echo "SECRET_KEY=test-secret-key-for-testing" >> .env.test
+        echo "ENCRYPTION_KEY=test-encryption-key-32-chars-long" >> .env.test
+
+    - name: Run database migrations
+      run: |
+        cd cloud/backend
+        python -c "from app.database import init_db; init_db()"
+
+    - name: Run unit tests
+      run: |
+        cd cloud/backend
+        pytest tests/unit/ -v --cov=app --cov-report=xml --cov-report=html
+
+    - name: Run integration tests
+      run: |
+        cd cloud/backend
+        pytest tests/integration/ -v --cov=app --cov-append --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./cloud/backend/coverage.xml
+        flags: backend
+        name: backend-coverage
+
+    - name: Archive coverage HTML
+      uses: actions/upload-artifact@v3
+      with:
+        name: backend-coverage
+        path: cloud/backend/htmlcov/
+
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: cloud/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd cloud/web
+        npm ci
+
+    - name: Run type check
+      run: |
+        cd cloud/web
+        npm run type-check || true
+
+    - name: Run linting
+      run: |
+        cd cloud/web
+        npm run lint || true
+
+    - name: Run unit tests
+      run: |
+        cd cloud/web
+        npm test -- --coverage --reporter=verbose
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./cloud/web/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+    - name: Archive coverage HTML
+      uses: actions/upload-artifact@v3
+      with:
+        name: frontend-coverage
+        path: cloud/web/coverage/
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: cloud/web/package-lock.json
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install backend dependencies
+      run: |
+        cd cloud/backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install frontend dependencies
+      run: |
+        cd cloud/web
+        npm ci
+
+    - name: Install E2E dependencies
+      run: |
+        cd e2e-tests
+        npm ci
+        npx playwright install --with-deps
+
+    - name: Start backend
+      run: |
+        cd cloud/backend
+        echo "DATABASE_URL=sqlite:///./test.db" >> .env
+        echo "SECRET_KEY=test-secret-key" >> .env
+        echo "ENCRYPTION_KEY=test-encryption-key-32-chars-long" >> .env
+        python -c "from app.database import init_db; init_db()" &
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        sleep 10
+
+    - name: Start frontend
+      run: |
+        cd cloud/web
+        npm run dev &
+        sleep 10
+
+    - name: Run E2E tests
+      run: |
+        cd e2e-tests
+        npm test
+      env:
+        BASE_URL: http://localhost:3000
+
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: playwright-report
+        path: e2e-tests/playwright-report/
+        retention-days: 30
+
+    - name: Upload E2E test videos
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: playwright-videos
+        path: e2e-tests/test-results/
+        retention-days: 7
+
+    - name: Upload E2E screenshots
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: playwright-screenshots
+        path: e2e-tests/test-results/
+        retention-days: 7
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        languages: python, javascript
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        cd cloud/backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run performance tests
+      run: |
+        cd cloud/backend
+        python test_performance.py > performance-results.txt
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: cloud/backend/performance-results.txt
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, e2e-tests, security-scan]
+    if: always()
+
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Generate summary
+      run: |
+        echo "# Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Backend Tests" >> $GITHUB_STEP_SUMMARY
+        echo "${{ needs.backend-tests.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Frontend Tests" >> $GITHUB_STEP_SUMMARY
+        echo "${{ needs.frontend-tests.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## E2E Tests" >> $GITHUB_STEP_SUMMARY
+        echo "${{ needs.e2e-tests.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Security Scan" >> $GITHUB_STEP_SUMMARY
+        echo "${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Some tests failed. Please check the logs and fix the issues."

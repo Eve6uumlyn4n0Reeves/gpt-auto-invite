@@ -4,7 +4,7 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,
@@ -13,26 +13,84 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
   },
-  // API rewrites to backend (keeps /api prefix)
+  // API代理配置 - 开发环境将API请求代理到后端
   async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: process.env.BACKEND_URL
-          ? `${process.env.BACKEND_URL}/api/:path*`
-          : '/api/:path*',
-      },
-    ]
+    const isDevelopment = process.env.NODE_ENV === 'development'
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000'
+
+    if (isDevelopment) {
+      // 开发环境：直接代理所有API请求到后端
+      // 这确保前端可以直接调用后端API
+      return [
+        {
+          source: '/api/:path*',
+          destination: `${backendUrl}/api/:path*`,
+        },
+      ]
+    }
+
+    // 生产环境：不使用代理，依赖API路由文件
+    return []
   },
   // Security headers
   async headers() {
+    const isProduction = process.env.NODE_ENV === 'production'
+
+    const securityHeaders = [
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'X-XSS-Protection', value: '1; mode=block' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), interest-cohort=()' },
+      { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+      { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+      { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
+    ]
+
+    // 生产环境添加HSTS
+    if (isProduction) {
+      securityHeaders.push({
+        key: 'Strict-Transport-Security',
+        value: 'max-age=31536000; includeSubDomains; preload'
+      })
+    }
+
+    // CSP策略 - 仅在生产环境使用严格策略
+    const cspDirectives = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-eval'", // 开发环境需要unsafe-eval
+      "style-src 'self' 'unsafe-inline'", // 开发环境需要unsafe-inline
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ]
+
+    if (isProduction) {
+      // 生产环境移除unsafe
+      cspDirectives[1] = "script-src 'self'"
+      cspDirectives[2] = "style-src 'self'"
+      cspDirectives.push("upgrade-insecure-requests")
+    }
+
+    securityHeaders.push({
+      key: 'Content-Security-Policy',
+      value: cspDirectives.join('; ')
+    })
+
     return [
       {
         source: '/(.*)',
+        headers: securityHeaders,
+      },
+      // API路由特殊处理
+      {
+        source: '/api/:path*',
         headers: [
-          { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'Referrer-Policy', value: 'origin-when-cross-origin' },
+          { key: 'X-Frame-Options', value: 'DENY' },
         ],
       },
     ]
