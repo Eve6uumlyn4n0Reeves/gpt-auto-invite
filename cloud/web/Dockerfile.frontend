@@ -1,4 +1,14 @@
-FROM node:18-alpine AS builder
+# Allow overriding base image to use a registry mirror if Docker Hub is slow/inaccessible
+ARG BASE_NODE_IMAGE=node:18-alpine
+FROM ${BASE_NODE_IMAGE} AS builder
+
+# Optional proxy support for corporate networks
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ENV HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    NO_PROXY=$NO_PROXY
 
 WORKDIR /app
 
@@ -18,7 +28,17 @@ COPY . .
 RUN pnpm build
 
 # 生产镜像
-FROM node:18-alpine AS runner
+# Keep the runtime base consistent (reuse builder base arg)
+ARG BASE_NODE_IMAGE
+FROM ${BASE_NODE_IMAGE} AS runner
+
+# Optional proxy support for runtime
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ENV HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    NO_PROXY=$NO_PROXY
 
 WORKDIR /app
 

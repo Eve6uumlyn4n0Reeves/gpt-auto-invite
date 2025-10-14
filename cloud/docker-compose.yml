@@ -5,6 +5,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.backend
+      args:
+        # Use 163 mirror by default to mitigate Docker Hub timeouts
+        BASE_PY_IMAGE: hub-mirror.c.163.com/library/python:3.11-slim
+        # Optional corporate proxies (uncomment and set if needed)
+        # HTTP_PROXY: ${HTTP_PROXY}
+        # HTTPS_PROXY: ${HTTPS_PROXY}
     ports:
       - "8000:8000"
     environment:
@@ -29,6 +35,12 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile.frontend
+      args:
+        BASE_NODE_IMAGE: hub-mirror.c.163.com/library/node:18-alpine
+        BASE_NODE_IMAGE_RUNTIME: hub-mirror.c.163.com/library/node:18-alpine
+        # Optional corporate proxies (uncomment and set if needed)
+        # HTTP_PROXY: ${HTTP_PROXY}
+        # HTTPS_PROXY: ${HTTPS_PROXY}
     ports:
       - "3000:3000"
     environment:

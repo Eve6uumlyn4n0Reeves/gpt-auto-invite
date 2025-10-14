@@ -644,15 +644,18 @@ def get_supported_batch_actions(request: Request, db: Session = Depends(get_db))
     return BatchOperationSupportedActions()
 
 @router.post("/batch/codes", response_model=BatchOpOut)
-def batch_codes(payload: BatchOpIn, request: Request, db: Session = Depends(get_db)):
+def batch_codes(
+    payload: BatchOpIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     """批量操作兑换码
     body: { action: str, ids: List[int], confirm: bool }
     支持: action = disable (禁用未使用的兑换码)
     """
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"batch_codes:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     action = payload.action
     ids = payload.ids or []
@@ -692,15 +695,18 @@ def batch_codes(payload: BatchOpIn, request: Request, db: Session = Depends(get_
 
 
 @router.post("/batch/users", response_model=BatchOpOut)
-def batch_users(payload: BatchOpIn, request: Request, db: Session = Depends(get_db)):
+def batch_users(
+    payload: BatchOpIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     """批量操作用户邀请
     body: { action: str, ids: List[int], confirm: bool }
     支持: resend | cancel | remove
     """
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"batch_users:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     action = payload.action
     ids = payload.ids or []
@@ -746,33 +752,42 @@ def batch_users(payload: BatchOpIn, request: Request, db: Session = Depends(get_
 
 
 @router.post("/cancel-invite")
-def admin_cancel_invite(payload: CancelInviteIn, request: Request, db: Session = Depends(get_db)):
+def admin_cancel_invite(
+    payload: CancelInviteIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"cancel_invite:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     ok, msg = cancel_invite(db, payload.email.strip().lower(), payload.team_id)
     return {"success": ok, "message": msg}
 
 
 @router.post("/remove-member")
-def admin_remove_member(payload: RemoveMemberIn, request: Request, db: Session = Depends(get_db)):
+def admin_remove_member(
+    payload: RemoveMemberIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"remove_member:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     ok, msg = remove_member(db, payload.email.strip().lower(), payload.team_id)
     return {"success": ok, "message": msg}
 
 
 @router.post("/change-password")
-def admin_change_password(payload: AdminChangePasswordIn, request: Request, db: Session = Depends(get_db)):
+def admin_change_password(
+    payload: AdminChangePasswordIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"change_pwd:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     row = db.query(models.AdminConfig).first()
     if not row or not verify_password(payload.old_password, row.password_hash):
@@ -933,11 +948,14 @@ def list_codes(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/codes/{code_id}/disable")
-def disable_code(code_id: int, request: Request, db: Session = Depends(get_db)):
+def disable_code(
+    code_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"disable_code:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     code = db.query(models.RedeemCode).filter(models.RedeemCode.id == code_id).first()
     if not code:
@@ -987,11 +1005,15 @@ def list_audit_logs(request: Request, db: Session = Depends(get_db), limit: int 
 
 
 @router.put("/mothers/{mother_id}")
-def update_mother(mother_id: int, payload: MotherCreateIn, request: Request, db: Session = Depends(get_db)):
+def update_mother(
+    mother_id: int,
+    payload: MotherCreateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"update_mother:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     mother = db.query(models.MotherAccount).filter(models.MotherAccount.id == mother_id).first()
     if not mother:
@@ -1037,11 +1059,14 @@ def update_mother(mother_id: int, payload: MotherCreateIn, request: Request, db:
 
 
 @router.delete("/mothers/{mother_id}")
-def delete_mother(mother_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_mother(
+    mother_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(admin_ops_rate_limit_dep),
+):
     require_admin(request, db)
-    ip = request.client.host if request.client else "_"
-    if not admin_ops_rl.allow(f"delete_mother:{ip}"):
-        raise HTTPException(status_code=429, detail="操作过于频繁")
+    # 速率限制通过依赖注入完成（admin_ops_rate_limit_dep）
 
     mother = db.query(models.MotherAccount).filter(models.MotherAccount.id == mother_id).first()
     if not mother:
