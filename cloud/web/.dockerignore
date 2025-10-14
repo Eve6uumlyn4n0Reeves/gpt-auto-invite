@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+build
+.git
+.gitignore
+Dockerfile.frontend
+Dockerfile*
+README.md
+*.log

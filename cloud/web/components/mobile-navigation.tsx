@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
-import { Menu, X, Home, Users, CreditCard, BarChart3, Settings, LogOut, Upload } from "lucide-react"
+import { Menu, X, Home, Users, CreditCard, BarChart3, Settings, LogOut, Upload, RefreshCw } from "lucide-react"
 import { useMobileGestures } from "@/hooks/use-mobile-gestures"
 
 interface MobileNavigationProps {
@@ -24,6 +24,7 @@ export function MobileNavigation({ currentTab, onTabChange, onLogout }: MobileNa
     { id: "codes-status", label: "码状态", icon: CreditCard },
     { id: "codes", label: "兑换码", icon: CreditCard },
     { id: "bulk-import", label: "批量导入", icon: Upload },
+    { id: "bulk-history", label: "批量历史", icon: RefreshCw },
     { id: "users", label: "用户", icon: Users },
     { id: "audit", label: "审计", icon: BarChart3 },
     { id: "settings", label: "设置", icon: Settings },

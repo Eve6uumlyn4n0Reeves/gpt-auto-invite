@@ -14,7 +14,7 @@ from app import models
 from app.database import SessionLocal
 from app.middleware import SecurityHeadersMiddleware, CSRFMiddleware, InputValidationMiddleware
 import threading, time, logging
-from app.services.services.maintenance import cleanup_stale_held
+from app.services.services.maintenance import cleanup_stale_held, cleanup_expired_mother_teams
 from app.services.services.rate_limiter_service import init_rate_limiter, close_rate_limiter
 
 init_db()
@@ -78,6 +78,12 @@ def _cleanup_loop():
         try:
             db = SessionLocal()
             count = cleanup_stale_held(db)
+            if count:
+                logging.info(f"cleanup_stale_held: freed {count} seats")
+
+            deleted_teams = cleanup_expired_mother_teams(db)
+            if deleted_teams:
+                logging.info(f"cleanup_expired_mother_teams: deleted {deleted_teams} teams from expired mothers")
             db.close()
         except Exception:
             logging.exception("cleanup_stale_held loop error")

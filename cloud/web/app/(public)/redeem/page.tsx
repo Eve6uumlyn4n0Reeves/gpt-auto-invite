@@ -4,7 +4,7 @@ export default function RedeemPage() {
   return (
     <div className="min-h-screen bg-background grid-bg">
       {/* Header */}
-      <header className="border-b border-border/40 backdrop-blur-sm bg-card/30">
+      <header className="border-b border-border/40 backdrop-blur-sm bg-card/30 select-none">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -18,23 +18,18 @@ export default function RedeemPage() {
                 <div className="text-xs text-muted-foreground">企业级 AI 团队邀请服务</div>
               </div>
             </div>
-            <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-background/50 border border-border/40">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="text-xs text-muted-foreground">服务正常</span>
-            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-lg">
-          <div className="text-center mb-8 animate-fade-in">
-            <h1 className="text-4xl md:text-5xl font-bold mb-6 text-balance leading-tight">
+      <main className="flex-1 flex items-center justify-center p-6 md:p-10">
+        <div className="w-full max-w-2xl">
+          <div className="text-center mb-8 animate-fade-in select-none">
+            <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight whitespace-normal md:whitespace-nowrap">
               兑换您的
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-brand-secondary to-primary animate-shimmer bg-[length:200%_100%]">
-                {" "}
-                GPT 团队{" "}
+              <span className="inline-block px-2 text-transparent bg-clip-text bg-gradient-to-r from-primary via-brand-secondary to-primary animate-shimmer">
+                GPT 团队
               </span>
               席位
             </h1>
@@ -59,7 +54,7 @@ export default function RedeemPage() {
 
           <RedeemFormEnhanced />
 
-          <div className="mt-12 space-y-4 animate-fade-in">
+          <div className="mt-12 space-y-4 animate-fade-in select-none">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="group p-6 rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-primary/10">
                 <div className="flex items-center space-x-3 mb-3">

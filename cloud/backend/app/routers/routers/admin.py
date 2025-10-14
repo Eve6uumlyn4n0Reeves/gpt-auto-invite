@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
@@ -44,6 +45,7 @@ from app.services.services.invites import resend_invite, cancel_invite, remove_m
 from app.config import settings
 from app.services.services import audit as audit_svc
 from app.services.services.rate_limiter_service import get_rate_limiter, ip_strategy
+from app.services.services.bulk_history import record_bulk_operation
 from app.utils.utils.rate_limiter.fastapi_integration import rate_limit
 from app.utils.performance import monitor_session_queries, query_monitor, log_performance_summary
 
@@ -207,6 +209,23 @@ async def batch_mothers_import_text(request: Request, db: Session = Depends(get_
             results.append({"index": i, "success": True, "mother_id": mother.id})
         except Exception as e:
             results.append({"index": i, "success": False, "error": str(e)})
+
+    try:
+        success_count = sum(1 for item in results if item.get("success"))
+        record_bulk_operation(
+            db,
+            operation_type=models.BulkOperationType.mother_import_text,
+            actor="admin",
+            total_count=len(results),
+            success_count=success_count,
+            failed_count=len(results) - success_count,
+            metadata={
+                "delimiter": delim,
+                "request_ip": request.client.host if request.client else None,
+            },
+        )
+    except Exception:
+        pass
 
     return results
 
@@ -400,6 +419,23 @@ async def generate_batch_codes(
 
     batch_id, codes = generate_codes(db, payload.count, payload.prefix, payload.expires_at, payload.batch_id)
     audit_svc.log(db, actor="admin", action="generate_codes", payload_redacted=f"count={payload.count}, batch={batch_id}")
+    try:
+        record_bulk_operation(
+            db,
+            operation_type=models.BulkOperationType.code_generate,
+            actor="admin",
+            total_count=payload.count,
+            success_count=payload.count,
+            failed_count=0,
+            metadata={
+                "batch_id": batch_id,
+                "prefix": payload.prefix,
+                "expires_at": payload.expires_at.isoformat() if payload.expires_at else None,
+                "request_ip": request.client.host if request.client else None,
+            },
+        )
+    except Exception:
+        pass
 
     after_active = active_codes + len(codes)
     return BatchCodesOut(
@@ -634,6 +670,21 @@ def batch_mothers_import(payload: list[MotherBatchItemIn], request: Request, db:
             results.append(MotherBatchImportItemResult(index=i, success=True, mother_id=mother.id))
         except Exception as e:
             results.append(MotherBatchImportItemResult(index=i, success=False, error=str(e)))
+    try:
+        success_count = sum(1 for item in results if item.success)
+        record_bulk_operation(
+            db,
+            operation_type=models.BulkOperationType.mother_import,
+            actor="admin",
+            total_count=len(results),
+            success_count=success_count,
+            failed_count=len(results) - success_count,
+            metadata={
+                "request_ip": request.client.host if request.client else None,
+            },
+        )
+    except Exception:
+        pass
     return results
 
 
@@ -684,6 +735,21 @@ def batch_codes(
                 failed += 1
         db.commit()
         audit_svc.log(db, actor="admin", action="batch_disable_codes", payload_redacted=f"count={processed}")
+        try:
+            record_bulk_operation(
+                db,
+                operation_type=models.BulkOperationType.code_bulk_action,
+                actor="admin",
+                total_count=len(ids),
+                success_count=processed,
+                failed_count=failed,
+                metadata={
+                    "action": action,
+                    "request_ip": request.client.host if request.client else None,
+                },
+            )
+        except Exception:
+            pass
         return BatchOpOut(
             success=True,
             message=f"已禁用 {processed} 个兑换码",
@@ -1129,3 +1195,87 @@ def toggle_performance_monitoring(request: Request, db: Session = Depends(get_db
 
     audit_svc.log(db, actor="admin", action="toggle_performance_monitoring", payload_redacted=f"status={status}")
     return {"ok": True, "message": f"性能监控{status}", "enabled": query_monitor.enabled}
+
+
+@router.get("/quota")
+def quota_snapshot(request: Request, db: Session = Depends(get_db)):
+    """返回当前兑换码与席位配额摘要"""
+    require_admin(request, db)
+    from sqlalchemy import and_, exists
+    from datetime import datetime
+
+    now = datetime.utcnow()
+
+    total_codes = db.query(models.RedeemCode).count()
+    used_codes = db.query(models.RedeemCode).filter(models.RedeemCode.status == models.CodeStatus.used).count()
+    active_codes = (
+        db.query(models.RedeemCode)
+        .filter(
+            models.RedeemCode.status == models.CodeStatus.unused,
+            ((models.RedeemCode.expires_at == None) | (models.RedeemCode.expires_at > now)),  # noqa: E711
+        )
+        .count()
+    )
+
+    team_exists = exists().where(
+        (models.MotherTeam.mother_id == models.MotherAccount.id) & (models.MotherTeam.is_enabled == True)  # noqa: E712
+    )
+    free_seats = (
+        db.query(models.SeatAllocation)
+        .join(models.MotherAccount, models.SeatAllocation.mother_id == models.MotherAccount.id)
+        .filter(
+            models.MotherAccount.status == models.MotherStatus.active,
+            models.SeatAllocation.status == models.SeatStatus.free,
+            team_exists,
+        )
+        .count()
+    )
+    used_seats = (
+        db.query(models.SeatAllocation)
+        .filter(models.SeatAllocation.status.in_([models.SeatStatus.held, models.SeatStatus.used]))
+        .count()
+    )
+
+    pending_invites = db.query(models.InviteRequest).filter(models.InviteRequest.status == models.InviteStatus.pending).count()
+
+    remaining_quota = max(0, free_seats - active_codes)
+
+    return {
+        "total_codes": total_codes,
+        "used_codes": used_codes,
+        "active_codes": active_codes,
+        "max_code_capacity": free_seats,
+        "remaining_quota": remaining_quota,
+        "used_seats": used_seats,
+        "pending_invites": pending_invites,
+        "generated_at": now.isoformat(),
+    }
+
+
+@router.get("/bulk/history")
+def bulk_history(request: Request, db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
+    """列出最近的批量操作记录"""
+    require_admin(request, db)
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+
+    logs = (
+        db.query(models.BulkOperationLog)
+        .order_by(models.BulkOperationLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": log.id,
+            "operation_type": log.operation_type.value if isinstance(log.operation_type, models.BulkOperationType) else str(log.operation_type),
+            "actor": log.actor,
+            "total_count": log.total_count,
+            "success_count": log.success_count,
+            "failed_count": log.failed_count,
+            "metadata": json.loads(log.metadata_json or "{}"),
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]

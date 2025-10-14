@@ -69,9 +69,9 @@ const nextConfig = {
     ]
 
     if (isProduction) {
-      // 生产环境移除unsafe
-      cspDirectives[1] = "script-src 'self'"
-      cspDirectives[2] = "style-src 'self'"
+      // 生产环境仍需允许内联脚本/动态编译完成 Next.js 水合，因此保留 unsafe-inline/unsafe-eval
+      cspDirectives[1] = "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      cspDirectives[2] = "style-src 'self' 'unsafe-inline'"
       cspDirectives.push("upgrade-insecure-requests")
     }
 

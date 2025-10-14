@@ -227,10 +227,10 @@
 
 @keyframes shimmer {
   0% {
-    background-position: -200px 0;
+    background-position: 0% 50%;
   }
   100% {
-    background-position: calc(200px + 100%) 0;
+    background-position: 200% 50%;
   }
 }
 
@@ -247,9 +247,8 @@
 }
 
 .animate-shimmer {
-  animation: shimmer 2s linear infinite;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.04), transparent);
-  background-size: 200px 100%;
+  animation: shimmer 3s linear infinite;
+  background-size: 200% 100%;
 }
 
 /* Interactive elements */

@@ -184,3 +184,25 @@ class AuditLog(Base):
     ip = Column(String(45), nullable=True)
     ua = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class BulkOperationType(str, enum.Enum):
+    mother_import = "mother_import"
+    mother_import_text = "mother_import_text"
+    code_generate = "code_generate"
+    code_bulk_action = "code_bulk_action"
+
+class BulkOperationLog(Base):
+    __tablename__ = "bulk_operation_logs"
+
+    id = Column(Integer, primary_key=True)
+    operation_type = Column(Enum(BulkOperationType), nullable=False)
+    actor = Column(String(64), nullable=False, default="admin")
+    total_count = Column(Integer, nullable=True)
+    success_count = Column(Integer, nullable=True)
+    failed_count = Column(Integer, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_bulk_operation_created_at", "created_at"),
+    )

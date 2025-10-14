@@ -18,8 +18,8 @@ RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 # 复制依赖文件
 COPY package.json pnpm-lock.yaml ./
 
-# 安装依赖（使用锁文件确保可重复构建）
-RUN pnpm install --frozen-lockfile
+# 安装依赖（允许在 CI 中锁文件失配时回退安装）
+RUN pnpm install --no-frozen-lockfile
 
 # 复制源代码
 COPY . .

@@ -50,7 +50,7 @@ export function RateLimitStatusDisplay({
         </div>
 
         <div className={`text-sm ${colorClass}`}>
-          {status.remaining}/{status.info.limit}
+          {status.info.remaining}/{status.info.limit}
         </div>
       </div>
 
@@ -167,7 +167,13 @@ export function RateLimitStatusComponent({
     )
   }
 
-  return <RateLimitStatusDisplay status={status} showDetails={showDetails} className={className} }
+  return (
+    <RateLimitStatusDisplay
+      status={status}
+      showDetails={showDetails}
+      className={className}
+    />
+  )
 }
 
 /**

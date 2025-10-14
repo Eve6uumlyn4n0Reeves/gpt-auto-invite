@@ -111,18 +111,28 @@ def stats(request: Request, db: Session = Depends(get_db)):
                     )
                 )
 
-            # 使用CASE WHEN进行分组统计
+            # 针对 SQLite 缺少 date_trunc 的兼容处理
+            dialect = db.bind.dialect.name if db.bind else ""
+
+            def trunc_day(column):
+                if dialect == "sqlite":
+                    return func.strftime('%Y-%m-%d', column)
+                return func.date_trunc('day', column)
+
+            truncate_invite = trunc_day(models.InviteRequest.created_at)
+            truncate_redeem = trunc_day(models.RedeemCode.used_at)
+
             daily_stats = db.query(
-                func.date_trunc('day', models.InviteRequest.created_at).label('date'),
+                truncate_invite.label('date'),
                 func.count(models.InviteRequest.id).label('invites')
             ).filter(
                 or_(*invite_conditions)
             ).group_by(
-                func.date_trunc('day', models.InviteRequest.created_at)
+                truncate_invite
             ).all() if invite_conditions else []
 
             redemption_stats = db.query(
-                func.date_trunc('day', models.RedeemCode.used_at).label('date'),
+                truncate_redeem.label('date'),
                 func.count(models.RedeemCode.id).label('redemptions')
             ).filter(
                 and_(
@@ -130,12 +140,19 @@ def stats(request: Request, db: Session = Depends(get_db)):
                     or_(*redemption_conditions)
                 )
             ).group_by(
-                func.date_trunc('day', models.RedeemCode.used_at)
+                truncate_redeem
             ).all() if redemption_conditions else []
 
             # 构建映射表
-            invites_map = {stat.date.date(): stat.invites for stat in daily_stats}
-            redemptions_map = {stat.date.date(): stat.redemptions for stat in redemption_stats}
+            def _normalize_date(value):
+                if isinstance(value, datetime):
+                    return value.date()
+                if isinstance(value, str):
+                    return datetime.strptime(value, '%Y-%m-%d').date()
+                return value
+
+            invites_map = {_normalize_date(stat.date): stat.invites for stat in daily_stats}
+            redemptions_map = {_normalize_date(stat.date): stat.redemptions for stat in redemption_stats}
 
             # 组装结果
             for i, date in enumerate(dates):

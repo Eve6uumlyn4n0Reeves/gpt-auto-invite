@@ -2,14 +2,33 @@
 
 import type React from "react"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
-import { RefreshCw, Copy, EyeOff, Edit, Trash2, Plus, Download } from "lucide-react"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  RefreshCw,
+  Copy,
+  EyeOff,
+  Edit,
+  Trash2,
+  Plus,
+  Download,
+  KeyRound,
+  Power,
+  RotateCcw,
+  Send,
+  Ban,
+  UserX,
+  FileInput,
+  Activity,
+} from "lucide-react"
 
 import { useKeyboardShortcuts, useGlobalShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useContextMenu } from "@/hooks/use-context-menu"
@@ -25,6 +44,10 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useCache } from "@/hooks/use-cache"
 import { usePerformanceMonitor } from "@/hooks/use-performance-monitor"
 import { VirtualTable } from "@/components/virtual-table"
+import { AdminRateLimitDashboard } from "@/components/admin-rate-limit-dashboard"
+import { TeamFormInput, BulkHistoryEntry, QuotaSnapshot } from "@/types/admin"
+import { BulkMotherImport } from "@/components/admin/bulk-mother-import"
+import { BulkHistoryPanel } from "@/components/admin/bulk-history-panel"
 
 interface AdminMeResponse {
   authenticated: boolean
@@ -85,6 +108,267 @@ interface AuditLog {
   created_at: string
 }
 
+interface ImportCookieResult {
+  access_token: string
+  token_expires_at?: string | null
+  user_email?: string | null
+  account_id?: string | null
+}
+
+interface PerformanceStatsResponse {
+  total_operations: number
+  operations: Record<
+    string,
+    {
+      count?: number
+      total_time_ms?: number
+      avg_time_ms?: number
+    }
+  >
+  slow_queries: Array<{
+    query: string
+    duration_ms: number
+    last_executed_at?: string | null
+  }>
+  enabled: boolean
+}
+
+interface MotherFormState {
+  name: string
+  access_token: string
+  token_expires_at: string
+  notes: string
+  teams: TeamFormInput[]
+}
+
+interface MotherFormDialogProps {
+  mode: "create" | "edit"
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  form: MotherFormState
+  onFormChange: (updater: (prev: MotherFormState) => MotherFormState) => void
+  onSubmit: (form: MotherFormState) => Promise<void>
+  loading: boolean
+  error?: string | null
+}
+
+const getEmptyMotherFormState = (): MotherFormState => ({
+  name: "",
+  access_token: "",
+  token_expires_at: "",
+  notes: "",
+  teams: [
+    {
+      team_id: "",
+      team_name: "",
+      is_enabled: true,
+      is_default: true,
+    },
+  ],
+})
+
+function MotherFormDialog({ mode, open, onOpenChange, form, onFormChange, onSubmit, loading, error }: MotherFormDialogProps) {
+  const title = mode === "create" ? "新增母号" : "编辑母号"
+
+  const updateField = (field: keyof MotherFormState, value: string) => {
+    onFormChange((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const updateTeam = (index: number, field: keyof TeamFormInput, value: string | boolean) => {
+    onFormChange((prev) => {
+      const teams = prev.teams.map((team, idx) =>
+        idx === index ? { ...team, [field]: value } : team
+      )
+      return { ...prev, teams }
+    })
+  }
+
+  const addTeam = () => {
+    onFormChange((prev) => ({
+      ...prev,
+      teams: [
+        ...prev.teams,
+        {
+          team_id: "",
+          team_name: "",
+          is_enabled: true,
+          is_default: prev.teams.length === 0,
+        },
+      ],
+    }))
+  }
+
+  const removeTeam = (index: number) => {
+    onFormChange((prev) => {
+      if (prev.teams.length <= 1) return prev
+      const teams = prev.teams.filter((_, idx) => idx !== index)
+      if (!teams.some((team) => team.is_default) && teams.length > 0) {
+        teams[0].is_default = true
+      }
+      return { ...prev, teams }
+    })
+  }
+
+  const setDefaultTeam = (index: number) => {
+    onFormChange((prev) => ({
+      ...prev,
+      teams: prev.teams.map((team, idx) => ({
+        ...team,
+        is_default: idx === index,
+      })),
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    try {
+      await onSubmit(form)
+    } catch {
+      // 错误已在外部处理
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" showCloseButton>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-1">
+              <Label htmlFor="mother-name">母号名称 *</Label>
+              <Input
+                id="mother-name"
+                value={form.name}
+                onChange={(e) => updateField("name", e.target.value)}
+                placeholder="邮箱或账号"
+                required
+                disabled={loading}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-1">
+              <Label htmlFor="mother-token">访问令牌 *</Label>
+              <Input
+                id="mother-token"
+                value={form.access_token}
+                onChange={(e) => updateField("access_token", e.target.value)}
+                placeholder="输入访问令牌"
+                type="password"
+                required={mode === "create"}
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground">{mode === "edit" ? "留空则保持原令牌" : ""}</p>
+            </div>
+            <div className="space-y-2 sm:col-span-1">
+              <Label htmlFor="mother-expire">令牌过期时间</Label>
+              <Input
+                id="mother-expire"
+                type="datetime-local"
+                value={form.token_expires_at}
+                onChange={(e) => updateField("token_expires_at", e.target.value)}
+                disabled={loading}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="mother-notes">备注</Label>
+              <Textarea
+                id="mother-notes"
+                value={form.notes}
+                onChange={(e) => updateField("notes", e.target.value)}
+                placeholder="可选：备注信息"
+                disabled={loading}
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium">团队配置</Label>
+              <Button type="button" variant="outline" size="sm" onClick={addTeam} disabled={loading}>
+                新增团队
+              </Button>
+            </div>
+
+            {form.teams.map((team, index) => (
+              <Card key={index} className="border-border/40 bg-card/40">
+                <CardContent className="p-4 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label>Team ID *</Label>
+                      <Input
+                        value={team.team_id}
+                        onChange={(e) => updateTeam(index, "team_id", e.target.value)}
+                        placeholder="team-identifier"
+                        disabled={loading}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Team 名称</Label>
+                      <Input
+                        value={team.team_name || ""}
+                        onChange={(e) => updateTeam(index, "team_name", e.target.value)}
+                        placeholder="可选"
+                        disabled={loading}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={team.is_enabled}
+                        onCheckedChange={(checked) => updateTeam(index, "is_enabled", checked)}
+                        disabled={loading}
+                      />
+                      <span className="text-sm">启用</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={team.is_default}
+                        onCheckedChange={() => setDefaultTeam(index)}
+                        disabled={loading}
+                      />
+                      <span className="text-sm">设为默认</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeTeam(index)}
+                      disabled={loading || form.teams.length <= 1}
+                    >
+                      移除
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+              取消
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? "提交中..." : mode === "create" ? "创建" : "保存修改"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 interface StatsData {
   total_codes: number
   used_codes: number
@@ -117,6 +401,11 @@ interface StatsData {
 export default function AdminDashboard() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
 
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+
+  const [csrfToken, setCsrfToken] = useState<string | null>(null)
   const [loginPassword, setLoginPassword] = useState("")
   const [loginLoading, setLoginLoading] = useState(false)
   const [loginError, setLoginError] = useState("")
@@ -145,12 +434,6 @@ export default function AdminDashboard() {
 
   const [codes, setCodes] = useState<CodeData[]>([])
   const [codesLoading, setCodesLoading] = useState(false)
-  // 批量导入（母号）
-  type BulkTeam = { team_id: string; team_name?: string; is_enabled?: boolean; is_default?: boolean }
-  type BulkItem = { name: string; access_token: string; token_expires_at?: string | null; notes?: string | null; teams: BulkTeam[]; warnings?: string[]; valid?: boolean }
-  const [bulkItems, setBulkItems] = useState<BulkItem[]>([])
-  const [bulkText, setBulkText] = useState("")
-  const [bulkLoading, setBulkLoading] = useState(false)
   // 码状态视图筛选
   const [codesStatusMother, setCodesStatusMother] = useState<string>("")
   const [codesStatusTeam, setCodesStatusTeam] = useState<string>("")
@@ -158,6 +441,37 @@ export default function AdminDashboard() {
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditLoading, setAuditLoading] = useState(false)
+  const [auditError, setAuditError] = useState<string | null>(null)
+  const [auditLoaded, setAuditLoaded] = useState(false)
+
+  const [performanceStats, setPerformanceStats] = useState<PerformanceStatsResponse | null>(null)
+  const [performanceLoading, setPerformanceLoading] = useState(false)
+  const [performanceError, setPerformanceError] = useState<string | null>(null)
+
+  const [quota, setQuota] = useState<QuotaSnapshot | null>(null)
+  const [quotaLoading, setQuotaLoading] = useState(false)
+  const [quotaError, setQuotaError] = useState<string | null>(null)
+
+  const [bulkHistory, setBulkHistory] = useState<BulkHistoryEntry[]>([])
+  const [bulkHistoryLoading, setBulkHistoryLoading] = useState(false)
+  const [bulkHistoryLoaded, setBulkHistoryLoaded] = useState(false)
+  const [bulkHistoryError, setBulkHistoryError] = useState<string | null>(null)
+
+  const [importCookieInput, setImportCookieInput] = useState("")
+  const [importCookieLoading, setImportCookieLoading] = useState(false)
+  const [importCookieResult, setImportCookieResult] = useState<ImportCookieResult | null>(null)
+  const [importCookieError, setImportCookieError] = useState<string | null>(null)
+
+  const [logoutAllLoading, setLogoutAllLoading] = useState(false)
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false)
+  const [changePasswordForm, setChangePasswordForm] = useState({
+    oldPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  })
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null)
+
+  const [userActionLoading, setUserActionLoading] = useState<number | null>(null)
 
   const [stats, setStats] = useState<StatsData | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
@@ -168,9 +482,9 @@ export default function AdminDashboard() {
 
   const [selectedUsers, setSelectedUsers] = useState<number[]>([])
   const [selectedCodes, setSelectedCodes] = useState<number[]>([])
-  const [batchOperation, setBatchOperation] = useState<string>("")
-  const [batchLoading, setBatchLoading] = useState(false)
-  const [exportLoading, setExportLoading] = useState(false)
+const [batchOperation, setBatchOperation] = useState<string>("")
+const [batchLoading, setBatchLoading] = useState(false)
+const [exportLoading, setExportLoading] = useState(false)
 
   // 批量操作支持的操作列表
   const [supportedBatchActions, setSupportedBatchActions] = useState<{
@@ -197,7 +511,91 @@ export default function AdminDashboard() {
   const dragAndDrop = useDragAndDrop()
   const commandPalette = useCommandPalette()
 
-  const [currentTab, setCurrentTab] = useState<string>("overview")
+  const [currentTab, setCurrentTab] = useState<string>("mothers")
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createMotherLoading, setCreateMotherLoading] = useState(false)
+  const [editMotherLoading, setEditMotherLoading] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [motherFormState, setMotherFormState] = useState<MotherFormState>(getEmptyMotherFormState)
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab")
+    if (pathname === "/admin") {
+      if (tabParam && tabParam !== currentTab) {
+        setCurrentTab(tabParam)
+      }
+      if (!tabParam && currentTab !== "mothers") {
+        setCurrentTab("mothers")
+      }
+    }
+  }, [searchParams, pathname])
+
+  useEffect(() => {
+    if (typeof window === "undefined" || pathname !== "/admin") return
+    const params = new URLSearchParams(window.location.search)
+    const existing = params.get("tab") ?? undefined
+
+    let needsUpdate = false
+    if (currentTab === "mothers") {
+      if (existing) {
+        params.delete("tab")
+        needsUpdate = true
+      }
+    } else if (existing !== currentTab) {
+      params.set("tab", currentTab)
+      needsUpdate = true
+    }
+
+    if (needsUpdate) {
+      const query = params.toString()
+      router.replace(`/admin${query ? `?${query}` : ""}`, { scroll: false })
+    }
+  }, [currentTab, router, pathname])
+
+  const ensureCsrfToken = useCallback(async () => {
+    if (csrfToken) return csrfToken
+    const resp = await fetch("/api/admin/csrf-token", { credentials: "include" })
+    if (!resp.ok) {
+      throw new Error("无法获取 CSRF token，请重新登录")
+    }
+    const data = await resp.json()
+    if (!data?.csrf_token) {
+      throw new Error("CSRF token 返回无效")
+    }
+    setCsrfToken(data.csrf_token)
+    return data.csrf_token as string
+  }, [csrfToken])
+
+  useEffect(() => {
+    if (createDialogOpen) {
+      setMotherFormState(getEmptyMotherFormState())
+      setFormError(null)
+    }
+  }, [createDialogOpen])
+
+  useEffect(() => {
+    if (editDialogOpen && editingMother) {
+      setFormError(null)
+      const formFromMother: MotherFormState = {
+        name: editingMother.name,
+        access_token: "",
+        token_expires_at: editingMother.token_expires_at
+          ? new Date(editingMother.token_expires_at).toISOString().slice(0, 16)
+          : "",
+        notes: editingMother.notes || "",
+        teams:
+          editingMother.teams.length > 0
+            ? editingMother.teams.map((team, idx) => ({
+                team_id: team.team_id,
+                team_name: team.team_name || "",
+                is_enabled: team.is_enabled,
+                is_default: idx === 0 ? true : team.is_default,
+              }))
+            : getEmptyMotherFormState().teams,
+      }
+      setMotherFormState(formFromMother)
+    }
+  }, [editDialogOpen, editingMother])
 
   const { isTouch } = useMobileGestures()
 
@@ -210,169 +608,24 @@ export default function AdminDashboard() {
   const containerHeight = 400
   const overscan = 5
 
-  const handleBulkFile = async (file: File) => {
-    const text = await file.text()
-    let items: BulkItem[] = []
-    try {
-      const trimmed = text.trim()
-      if (trimmed.startsWith("[")) {
-        const arr = JSON.parse(trimmed)
-        if (Array.isArray(arr)) items = arr
-      } else {
-        const lines = trimmed.split(/\r?\n/)
-        for (const line of lines) {
-          const s = line.trim()
-          if (!s) continue
-          // 优先尝试解析 JSON 行
-          let parsed: any | null = null
-          try { parsed = JSON.parse(s) } catch { parsed = null }
-          if (parsed && typeof parsed === 'object') {
-            items.push(parsed)
-            continue
-          }
-          // 其次解析 email---token 简单格式
-          if (s.includes('---')) {
-            const [email, token] = s.split('---')
-            const e = (email || '').trim()
-            const t = (token || '').trim()
-            if (e && t) {
-              items.push({ name: e, access_token: t, teams: [] })
-            }
-          }
-        }
-      }
-      // 规范化 teams
-      items = items.map((it) => ({
-        ...it,
-        teams: (it.teams || []).map((t: any, idx: number) => ({
-          team_id: String(t.team_id || "").trim(),
-          team_name: t.team_name || t.team_id,
-          is_enabled: t.is_enabled !== false,
-          is_default: t.is_default === true && idx === 0,
-        })),
-      }))
-      setBulkItems(items)
-    } catch (e) {
-      setError("批量文件解析失败")
-    }
-  }
+  const remainingQuota = quota?.remaining_quota ?? (
+    stats?.remaining_code_quota ?? (
+      stats?.max_code_capacity !== undefined && stats?.active_codes !== undefined
+        ? Math.max((stats?.max_code_capacity ?? 0) - (stats?.active_codes ?? 0), 0)
+        : null
+    )
+  )
+  const maxCodeCapacity = quota?.max_code_capacity ?? stats?.max_code_capacity ?? null
+  const activeCodesCount = quota?.active_codes ?? stats?.active_codes ?? null
 
-  const handleBulkPaste = () => {
-    const trimmed = (bulkText || "").trim()
-    if (!trimmed) {
-      setBulkItems([])
-      return
-    }
-    const lines = trimmed.split(/\r?\n/)
-    const items: BulkItem[] = []
-    for (const line of lines) {
-      const s = line.trim()
-      if (!s) continue
-      if (s.includes('---')) {
-        const [email, token] = s.split('---')
-        const e = (email || '').trim()
-        const t = (token || '').trim()
-        if (e && t) {
-          items.push({ name: e, access_token: t, teams: [] })
-        }
-      } else {
-        // 兼容空格分隔
-        const parts = s.split(/\s+/)
-        if (parts.length >= 2) {
-          const e = parts[0]
-          const t = parts.slice(1).join(' ')
-          items.push({ name: e, access_token: t, teams: [] })
-        }
-      }
-    }
-    setBulkItems(items)
-  }
-
-  const bulkValidate = async () => {
-    setBulkLoading(true)
-    try {
-      const resp = await fetch("/api/admin/mothers/batch/validate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bulkItems) })
-      if (resp.ok) {
-        const data: Array<{ index: number; valid: boolean; warnings: string[]; teams: BulkTeam[] }> = await resp.json()
-        setBulkItems((prev) => {
-          const copy = [...prev]
-          for (const row of data) {
-            if (copy[row.index]) {
-              copy[row.index].valid = row.valid
-              copy[row.index].warnings = row.warnings
-              copy[row.index].teams = row.teams
-            }
-          }
-          return copy
-        })
-      } else {
-        setError("批量校验失败")
-      }
-    } catch {
-      setError("批量校验失败")
-    } finally {
-      setBulkLoading(false)
-    }
-  }
-
-  const bulkImport = async () => {
-    setBulkLoading(true)
-    try {
-      const resp = await fetch("/api/admin/mothers/batch/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bulkItems) })
-      if (resp.ok) {
-        const data: Array<{ index: number; success: boolean; error?: string }> = await resp.json()
-        const okCount = data.filter((d) => d.success).length
-        setError("")
-        notifications.addNotification({ type: okCount === data.length ? "success" : "warning", title: "批量导入完成", message: `成功 ${okCount} / ${data.length}` })
-        // 导入成功后清空或保留失败项
-        setBulkItems((prev) => prev.filter((_, i) => !data.find((d) => d.index === i && d.success)))
-        loadMothers()
-      } else {
-        setError("批量导入失败")
-      }
-    } catch {
-      setError("批量导入失败")
-    } finally {
-      setBulkLoading(false)
-    }
-  }
-
-  const updateTeamName = (i: number, teamIdx: number, value: string) => {
-    setBulkItems((prev) => {
-      const copy = [...prev]
-      if (copy[i]) {
-        const teams = [...(copy[i].teams || [])]
-        if (teams[teamIdx]) teams[teamIdx] = { ...teams[teamIdx], team_name: value }
-        copy[i] = { ...copy[i], teams }
-      }
-      return copy
-    })
-  }
-
-  const toggleTeamEnabled = (i: number, teamIdx: number) => {
-    setBulkItems((prev) => {
-      const copy = [...prev]
-      const item = copy[i]
-      if (item && item.teams[teamIdx]) {
-        const t = item.teams[teamIdx]
-        item.teams[teamIdx] = { ...t, is_enabled: !(t.is_enabled !== false) }
-        copy[i] = { ...item }
-      }
-      return copy
-    })
-  }
-
-  const setDefaultTeam = (i: number, teamIdx: number) => {
-    setBulkItems((prev) => {
-      const copy = [...prev]
-      const item = copy[i]
-      if (item) {
-        const teams = item.teams.map((t, idx) => ({ ...t, is_default: idx === teamIdx }))
-        copy[i] = { ...item, teams }
-      }
-      return copy
-    })
-  }
+  const clampCodeCount = useCallback(
+    (raw: number) => {
+      const upper = remainingQuota ?? 10000
+      const bounded = Math.max(0, Math.min(raw, upper ?? 10000))
+      return bounded
+    },
+    [remainingQuota]
+  )
 
   const filteredUsers = useMemo(() => {
     const filtered = users.filter((user) => {
@@ -467,6 +720,16 @@ export default function AdminDashboard() {
     }
   }, [authenticated])
 
+  useEffect(() => {
+    if (authenticated) {
+      loadQuota()
+    } else {
+      setQuota(null)
+      setBulkHistory([])
+      setBulkHistoryLoaded(false)
+    }
+  }, [authenticated])
+
   const loadSupportedBatchActions = async () => {
     try {
       const response = await fetch('/api/admin/batch/supported-actions')
@@ -485,6 +748,7 @@ export default function AdminDashboard() {
         loadStats()
         if (users.length > 0) loadUsers()
         if (codes.length > 0) loadCodes()
+        loadQuota()
       }, 30000) // Refresh every 30 seconds
       setRefreshInterval(interval)
       return () => clearInterval(interval)
@@ -500,6 +764,24 @@ export default function AdminDashboard() {
       loadCodes()
     }
   }, [authenticated, currentTab])
+
+  useEffect(() => {
+    if (authenticated && currentTab === "bulk-history" && !bulkHistoryLoaded && !bulkHistoryLoading) {
+      loadBulkHistory(true)
+    }
+  }, [authenticated, currentTab, bulkHistoryLoaded, bulkHistoryLoading])
+
+  useEffect(() => {
+    if (["audit", "overview"].includes(currentTab) && !auditLoaded && !auditLoading) {
+      loadAuditLogs()
+    }
+  }, [currentTab, auditLoaded, auditLoading])
+
+  useEffect(() => {
+    if (currentTab === "settings" && !performanceStats && !performanceLoading) {
+      loadPerformanceStats()
+    }
+  }, [currentTab, performanceStats, performanceLoading])
 
   const checkAuth = async () => {
     try {
@@ -652,16 +934,19 @@ export default function AdminDashboard() {
 
   const loadAuditLogs = async () => {
     setAuditLoading(true)
+    setAuditError(null)
     try {
       const response = await fetch("/api/admin/audit-logs")
       if (response.ok) {
         const data = await response.json()
         setAuditLogs(data)
+        setAuditLoaded(true)
       } else {
-        setError("加载审计日志失败")
+        const data = await response.json().catch(() => ({}))
+        setAuditError(data?.message || data?.detail || "加载审计日志失败")
       }
     } catch (error) {
-      setError("加载审计日志失败")
+      setAuditError(error instanceof Error ? error.message : "加载审计日志失败")
     } finally {
       setAuditLoading(false)
     }
@@ -678,6 +963,26 @@ export default function AdminDashboard() {
         const data = await response.json()
         setStats(data)
         statsCache.set("admin-stats", data) // Cache the data
+        const todayKey = new Date().toISOString().slice(5, 10)
+        let todayInvites = 0
+        let todayRedemptions = 0
+        if (Array.isArray(data?.recent_activity)) {
+          const todayEntry = data.recent_activity.find((item: { date: string }) => item.date === todayKey)
+          if (todayEntry) {
+            todayInvites = todayEntry.invites ?? 0
+            todayRedemptions = todayEntry.redemptions ?? 0
+          }
+        }
+        const breakdown = (data?.status_breakdown ?? {}) as Record<string, number>
+        const totalInvites = Object.values(breakdown).reduce((sum, value) => sum + (value ?? 0), 0)
+        const successRate =
+          totalInvites > 0 ? Math.round(((breakdown.sent ?? 0) / totalInvites) * 1000) / 10 : 0
+        setQuickStats({
+          todayInvites,
+          todayRedemptions,
+          avgResponseTime: 0,
+          successRate,
+        })
         setServiceStatus({
           backend: "online",
           lastCheck: new Date(),
@@ -715,20 +1020,152 @@ export default function AdminDashboard() {
     }
   }
 
+  const loadPerformanceStats = async () => {
+    setPerformanceLoading(true)
+    setPerformanceError(null)
+    try {
+      const response = await fetch("/api/admin/performance/stats")
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "加载性能统计失败")
+      }
+      setPerformanceStats(data as PerformanceStatsResponse)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "加载性能统计失败"
+      setPerformanceError(message)
+    } finally {
+      setPerformanceLoading(false)
+    }
+  }
+
+  const togglePerformanceMonitoring = async () => {
+    try {
+      const response = await fetch("/api/admin/performance/toggle", {
+        method: "POST",
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "切换性能监控失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "性能监控状态",
+        message: data?.message || "性能监控状态已更新",
+      })
+      setPerformanceStats((prev) =>
+        prev
+              ? {
+                  ...prev,
+                  enabled: typeof data?.enabled === "boolean" ? data.enabled : !prev.enabled,
+                }
+              : prev
+      )
+      loadPerformanceStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "切换性能监控失败"
+      setPerformanceError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "性能监控失败",
+        message,
+      })
+    }
+  }
+
+  const resetPerformanceStats = async () => {
+    try {
+      const response = await fetch("/api/admin/performance/reset", {
+        method: "POST",
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "重置性能统计失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "性能统计已重置",
+        message: data?.message || "性能统计数据已清空",
+      })
+      loadPerformanceStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "重置性能统计失败"
+      setPerformanceError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "重置失败",
+        message,
+      })
+    }
+  }
+
+  const loadQuota = async () => {
+    setQuotaLoading(true)
+    setQuotaError(null)
+    try {
+      const response = await fetch("/api/admin/quota")
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "获取配额失败")
+      }
+      setQuota(data as QuotaSnapshot)
+      setStats((prev) =>
+        prev
+          ? {
+              ...prev,
+              max_code_capacity: typeof data.max_code_capacity === "number" ? data.max_code_capacity : prev.max_code_capacity,
+              remaining_code_quota:
+                typeof data.remaining_quota === "number" ? data.remaining_quota : prev.remaining_code_quota,
+              active_codes: typeof data.active_codes === "number" ? data.active_codes : prev.active_codes,
+              total_codes: typeof data.total_codes === "number" ? data.total_codes : prev.total_codes,
+              used_codes: typeof data.used_codes === "number" ? data.used_codes : prev.used_codes,
+            }
+          : prev,
+      )
+    } catch (error) {
+      setQuotaError(error instanceof Error ? error.message : "获取配额失败")
+    } finally {
+      setQuotaLoading(false)
+    }
+  }
+
+  const loadBulkHistory = async (force = false) => {
+    if (!force && bulkHistoryLoaded) return
+    setBulkHistoryLoading(true)
+    setBulkHistoryError(null)
+    try {
+      const response = await fetch(`/api/admin/bulk/history?limit=50`)
+      const data = await response.json().catch(() => [])
+      if (!response.ok) {
+        throw new Error((data as any)?.message || (data as any)?.detail || "获取批量历史失败")
+      }
+      if (!Array.isArray(data)) {
+        throw new Error("批量历史返回格式异常")
+      }
+      setBulkHistory(data as BulkHistoryEntry[])
+      setBulkHistoryLoaded(true)
+    } catch (error) {
+      setBulkHistoryError(error instanceof Error ? error.message : "获取批量历史失败")
+    } finally {
+      setBulkHistoryLoading(false)
+    }
+  }
+
   const generateCodes = async () => {
     if (codeCount < 1 || codeCount > 10000) return
     // Enforce frontend quota guard
-    if (stats?.remaining_code_quota !== undefined && codeCount > stats.remaining_code_quota) {
-      setError(`超出可生成配额（剩余 ${stats.remaining_code_quota} 个）`)
+    if (remainingQuota !== null && codeCount > remainingQuota) {
+      setError(`超出可生成配额（剩余 ${remainingQuota} 个）`)
       return
     }
 
     setGenerateLoading(true)
     try {
+      const token = await ensureCsrfToken()
       const response = await fetch("/api/admin/codes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-CSRF-Token": token,
         },
         body: JSON.stringify({
           count: codeCount,
@@ -740,7 +1177,37 @@ export default function AdminDashboard() {
         const data = await response.json()
         setGeneratedCodes(data.codes)
         setShowGenerated(true)
+        if (
+          typeof data?.remaining_quota === "number" ||
+          typeof data?.max_code_capacity === "number" ||
+          typeof data?.active_codes === "number"
+        ) {
+          setStats((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  max_code_capacity:
+                    typeof data.max_code_capacity === "number"
+                      ? data.max_code_capacity
+                      : prev.max_code_capacity,
+                  active_codes:
+                    typeof data.active_codes === "number"
+                      ? data.active_codes
+                      : prev.active_codes,
+                  remaining_code_quota:
+                    typeof data.remaining_quota === "number"
+                      ? data.remaining_quota
+                      : prev.remaining_code_quota,
+                }
+              : prev
+          )
+          if (typeof data?.remaining_quota === "number") {
+            setCodeCount((prev) => Math.max(0, Math.min(prev, data.remaining_quota)))
+          }
+        }
         loadStats()
+        loadQuota()
+        loadBulkHistory(true)
         if (codes.length > 0) {
           loadCodes() // 刷新兑换码列表
         }
@@ -789,6 +1256,310 @@ export default function AdminDashboard() {
       }
     } catch (error) {
       setError("删除母账号失败")
+    }
+  }
+
+  const handleLogoutAll = async () => {
+    if (!confirm("确定要撤销所有管理员会话吗？这会强制所有已登录的管理员重新登录。")) {
+      return
+    }
+    setLogoutAllLoading(true)
+    try {
+      const response = await fetch("/api/admin/logout-all", {
+        method: "POST",
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "撤销会话失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "会话已撤销",
+        message: data?.message || "所有管理员会话已失效",
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "撤销会话失败"
+      notifications.addNotification({
+        type: "error",
+        title: "操作失败",
+        message,
+      })
+    } finally {
+      setLogoutAllLoading(false)
+    }
+  }
+
+  const handleImportCookie = async () => {
+    if (!importCookieInput.trim()) {
+      setImportCookieError("请输入包含 session 的 Cookie")
+      return
+    }
+    setImportCookieLoading(true)
+    setImportCookieError(null)
+    try {
+      const token = await ensureCsrfToken()
+      const response = await fetch("/api/admin/import-cookie", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify({ cookie: importCookieInput.trim() }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "导入失败")
+      }
+      setImportCookieResult(data as ImportCookieResult)
+      notifications.addNotification({
+        type: "success",
+        title: "Cookie 已导入",
+        message: "访问令牌已提取，可直接创建母号",
+      })
+      const expires = data?.token_expires_at ? new Date(data.token_expires_at).toISOString().slice(0, 16) : ""
+      setMotherFormState((prev) => ({
+        ...prev,
+        name: data?.user_email || prev.name,
+        access_token: data?.access_token || prev.access_token,
+        token_expires_at: expires,
+      }))
+      setCreateDialogOpen(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "导入失败"
+      setImportCookieError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "导入失败",
+        message,
+      })
+    } finally {
+      setImportCookieLoading(false)
+    }
+  }
+
+  const handleChangePasswordSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setChangePasswordError(null)
+
+    const { oldPassword, newPassword, confirmPassword } = changePasswordForm
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setChangePasswordError("请完整填写所有字段")
+      return
+    }
+    if (newPassword.length < 8) {
+      setChangePasswordError("新密码长度至少 8 位")
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError("两次输入的新密码不一致")
+      return
+    }
+
+    setChangePasswordLoading(true)
+    try {
+      const response = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          old_password: oldPassword,
+          new_password: newPassword,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.message || data?.detail || "修改密码失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "密码已更新",
+        message: "请妥善保管新的管理员密码",
+      })
+      setChangePasswordForm({
+        oldPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "修改密码失败"
+      setChangePasswordError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "修改密码失败",
+        message,
+      })
+    } finally {
+      setChangePasswordLoading(false)
+    }
+  }
+
+  const performUserAction = async (user: UserData, action: "resend" | "cancel" | "remove") => {
+    if (!user.team_id) {
+      notifications.addNotification({
+        type: "error",
+        title: "无法执行操作",
+        message: "该用户缺少团队信息，无法执行邀请操作",
+      })
+      return
+    }
+    setUserActionLoading(user.id)
+    try {
+      let endpoint = "/api/admin/resend"
+      let successTitle = "邀请已重发"
+      if (action === "cancel") {
+        endpoint = "/api/admin/cancel-invite"
+        successTitle = "邀请已取消"
+      } else if (action === "remove") {
+        endpoint = "/api/admin/remove-member"
+        successTitle = "成员已移除"
+      }
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user.email,
+          team_id: user.team_id,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.message || data?.detail || "操作失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: successTitle,
+        message: data?.message || `${user.email} 的请求已处理`,
+      })
+      loadUsers()
+      loadStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "操作失败"
+      notifications.addNotification({
+        type: "error",
+        title: action === "resend" ? "重发邀请失败" : action === "cancel" ? "取消邀请失败" : "移除成员失败",
+        message,
+      })
+    } finally {
+      setUserActionLoading(null)
+    }
+  }
+
+  const buildMotherPayload = (form: MotherFormState) => {
+    const teams = form.teams
+      .filter((t) => t.team_id.trim().length > 0)
+      .map((t, index) => ({
+        team_id: t.team_id.trim(),
+        team_name: t.team_name?.trim() || undefined,
+        is_enabled: t.is_enabled,
+        is_default: t.is_default && index === 0 ? true : t.is_default,
+      }))
+
+    const hasDefault = teams.some((t) => t.is_default)
+    if (!hasDefault && teams.length > 0) {
+      teams[0].is_default = true
+    }
+
+    return {
+      name: form.name.trim(),
+      access_token: form.access_token.trim(),
+      token_expires_at: form.token_expires_at ? new Date(form.token_expires_at).toISOString() : null,
+      notes: form.notes.trim() || undefined,
+      teams,
+    }
+  }
+
+  const handleCreateMother = async (form: MotherFormState) => {
+    setCreateMotherLoading(true)
+    setFormError(null)
+    try {
+      const token = await ensureCsrfToken()
+      const payload = buildMotherPayload(form)
+      if (!payload.name) {
+        throw new Error("母号名称不能为空")
+      }
+      if (!payload.access_token || payload.access_token.length < 10) {
+        throw new Error("访问令牌长度至少10位")
+      }
+      const resp = await fetch("/api/admin/mothers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data?.detail || data?.message || "创建失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "创建成功",
+        message: `${payload.name} 已录入`,
+      })
+      setCreateDialogOpen(false)
+      setMotherFormState(getEmptyMotherFormState())
+      loadMothers()
+      loadStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "创建母号失败"
+      setFormError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "创建母号失败",
+        message,
+      })
+      throw error
+    } finally {
+      setCreateMotherLoading(false)
+    }
+  }
+
+  const handleUpdateMother = async (motherId: number, form: MotherFormState) => {
+    setEditMotherLoading(true)
+    setFormError(null)
+    try {
+      const payload = buildMotherPayload(form)
+      if (!payload.name) {
+        throw new Error("母号名称不能为空")
+      }
+      if (!payload.access_token || payload.access_token.length < 10) {
+        throw new Error("请填写新的访问令牌（至少10位）")
+      }
+      const resp = await fetch(`/api/admin/mothers/${motherId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data?.detail || data?.message || "更新失败")
+      }
+      notifications.addNotification({
+        type: "success",
+        title: "更新成功",
+        message: `${payload.name} 已更新`,
+      })
+      setEditDialogOpen(false)
+      setEditingMother(null)
+      loadMothers()
+      loadStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "更新母号失败"
+      setFormError(message)
+      notifications.addNotification({
+        type: "error",
+        title: "更新母号失败",
+        message,
+      })
+      throw error
+    } finally {
+      setEditMotherLoading(false)
     }
   }
 
@@ -942,6 +1713,8 @@ export default function AdminDashboard() {
         }
         setBatchOperation("")
         loadStats()
+        loadQuota()
+        loadBulkHistory(true)
       } else {
         const errorData = await response.json()
         setError(errorData.message || errorData.detail || "批量操作失败")
@@ -1075,16 +1848,23 @@ export default function AdminDashboard() {
       {
         id: "resend-invite",
         label: "重发邀请",
-        icon: <RefreshCw className="w-4 h-4" />,
-        action: () => {
-          // Implement resend logic
-          notifications.addNotification({
-            type: "info",
-            title: "重发邀请",
-            message: `正在为 ${user.email} 重发邀请...`,
-          })
-        },
-        disabled: user.status === "sent",
+        icon: <Send className="w-4 h-4" />,
+        action: () => performUserAction(user, "resend"),
+        disabled: userActionLoading === user.id || user.status === "sent",
+      },
+      {
+        id: "cancel-invite",
+        label: "取消邀请",
+        icon: <Ban className="w-4 h-4" />,
+        action: () => performUserAction(user, "cancel"),
+        disabled: userActionLoading === user.id,
+      },
+      {
+        id: "remove-member",
+        label: "移除成员",
+        icon: <UserX className="w-4 h-4" />,
+        action: () => performUserAction(user, "remove"),
+        disabled: userActionLoading === user.id,
       },
     ]
 
@@ -1167,6 +1947,51 @@ export default function AdminDashboard() {
       label: "邀请时间",
       mobile: { priority: "low" as const },
       render: (value: string) => formatDate(value),
+    },
+    {
+      key: "actions",
+      label: "操作",
+      mobile: { priority: "low" as const, label: "操作" },
+      render: (_: unknown, user: UserData, _index?: number) => (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              performUserAction(user, "resend")
+            }}
+            disabled={userActionLoading === user.id || user.status === "sent"}
+          >
+            <Send className={`w-4 h-4 mr-1 ${userActionLoading === user.id ? "animate-spin" : ""}`} />
+            <span className="hidden xl:inline">重发</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              performUserAction(user, "cancel")
+            }}
+            disabled={userActionLoading === user.id}
+          >
+            <Ban className="w-4 h-4 mr-1" />
+            <span className="hidden xl:inline">取消</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              performUserAction(user, "remove")
+            }}
+            disabled={userActionLoading === user.id}
+          >
+            <UserX className="w-4 h-4 mr-1" />
+            <span className="hidden xl:inline">移除</span>
+          </Button>
+        </div>
+      ),
     },
   ]
 
@@ -1482,84 +2307,88 @@ export default function AdminDashboard() {
         )}
 
         <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-            <div className="flex-1">
-              <Input
-                placeholder="搜索用户、兑换码、团队..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className={`bg-background/50 border-border/60 ${isTouch ? "min-h-[44px] text-base" : ""}`}
-              />
-            </div>
-            <div className="flex gap-2">
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className={`px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
-              >
-                <option value="all">所有状态</option>
-                <option value="sent">已发送</option>
-                <option value="pending">待处理</option>
-                <option value="failed">失败</option>
-                <option value="used">已使用</option>
-                <option value="unused">未使用</option>
-              </select>
-              <Button
-                variant="outline"
-                size={isTouch ? "default" : "sm"}
-                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                className="bg-transparent"
-              >
-                高级筛选
-              </Button>
-            </div>
-          </div>
-
-          {showAdvancedFilters && (
-            <div className="p-3 sm:p-4 border border-border/40 rounded-lg bg-card/30 backdrop-blur-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                <div>
-                  <Label className="text-sm">排序字段</Label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                    className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
-                  >
-                    <option value="created_at">创建时间</option>
-                    <option value="email">邮箱</option>
-                    <option value="status">状态</option>
-                    <option value="team_name">团队</option>
-                  </select>
-                </div>
-                <div>
-                  <Label className="text-sm">排序方向</Label>
-                  <select
-                    value={sortOrder}
-                    onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-                    className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
-                  >
-                    <option value="desc">降序</option>
-                    <option value="asc">升序</option>
-                  </select>
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="outline"
-                    size={isTouch ? "default" : "sm"}
-                    onClick={() => {
-                      setSearchTerm("")
-                      setFilterStatus("all")
-                      setSortBy("created_at")
-                      setSortOrder("desc")
-                    }}
-                    className="bg-transparent w-full sm:w-auto"
-                  >
-                    重置筛选
-                  </Button>
-                </div>
+        {["users", "codes", "codes-status"].includes(currentTab) && (
+          <>
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+              <div className="flex-1">
+                <Input
+                  placeholder="搜索用户、兑换码、团队..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className={`bg-background/50 border-border/60 ${isTouch ? "min-h-[44px] text-base" : ""}`}
+                />
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className={`px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
+                >
+                  <option value="all">所有状态</option>
+                  <option value="sent">已发送</option>
+                  <option value="pending">待处理</option>
+                  <option value="failed">失败</option>
+                  <option value="used">已使用</option>
+                  <option value="unused">未使用</option>
+                </select>
+                <Button
+                  variant="outline"
+                  size={isTouch ? "default" : "sm"}
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  className="bg-transparent"
+                >
+                  高级筛选
+                </Button>
               </div>
             </div>
-          )}
+
+            {showAdvancedFilters && (
+              <div className="p-3 sm:p-4 border border-border/40 rounded-lg bg-card/30 backdrop-blur-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                  <div>
+                    <Label className="text-sm">排序字段</Label>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                      className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
+                    >
+                      <option value="created_at">创建时间</option>
+                      <option value="email">邮箱</option>
+                      <option value="status">状态</option>
+                      <option value="team_name">团队</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-sm">排序方向</Label>
+                    <select
+                      value={sortOrder}
+                      onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+                      className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm ${isTouch ? "min-h-[44px]" : ""}`}
+                    >
+                      <option value="desc">降序</option>
+                      <option value="asc">升序</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      variant="outline"
+                      size={isTouch ? "default" : "sm"}
+                      onClick={() => {
+                        setSearchTerm("")
+                        setFilterStatus("all")
+                        setSortBy("created_at")
+                        setSortOrder("desc")
+                      }}
+                      className="bg-transparent w-full sm:w-auto"
+                    >
+                      重置筛选
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
         </div>
 
         {process.env.NODE_ENV === "development" && performanceMetrics.metrics && (
@@ -1746,19 +2575,26 @@ export default function AdminDashboard() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="codeCount">生成数量</Label>
-                    <Input
-                      id="codeCount"
-                      type="number"
-                      min="1"
-                      max="10000"
-                      value={codeCount}
-                      onChange={(e) => setCodeCount(Number.parseInt(e.target.value) || 1)}
-                      className={`bg-background/50 border-border/60 ${isTouch ? "min-h-[44px] text-base" : ""}`}
-                      disabled={generateLoading}
-                    />
-                  </div>
-                  <div>
+                  <Label htmlFor="codeCount">生成数量</Label>
+                  <Input
+                    id="codeCount"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    value={codeCount}
+                    onChange={(e) => {
+                      const parsed = Number.parseInt(e.target.value, 10)
+                      if (Number.isNaN(parsed)) {
+                        setCodeCount(0)
+                      } else {
+                        setCodeCount(clampCodeCount(parsed))
+                      }
+                    }}
+                    className={`bg-background/50 border-border/60 ${isTouch ? "min-h-[44px] text-base" : ""}`}
+                    disabled={generateLoading}
+                  />
+                </div>
+                <div>
                     <Label htmlFor="codePrefix">前缀（可选）</Label>
                     <Input
                       id="codePrefix"
@@ -1772,10 +2608,34 @@ export default function AdminDashboard() {
                     />
                   </div>
                 </div>
+                <div className="text-xs sm:text-sm text-muted-foreground space-y-1">
+                  <p>
+                    当前已启用配额：{maxCodeCapacity ?? "未知"}（席位） · 活跃兑换码：{activeCodesCount ?? "未知"}
+                  </p>
+                  <p>
+                    剩余可生成数量：
+                    {remainingQuota !== null ? (
+                      <span className={remainingQuota > 0 ? "text-foreground font-medium" : "text-red-600 font-medium"}>
+                        {remainingQuota}
+                      </span>
+                    ) : (
+                      "计算中"
+                    )}
+                    {remainingQuota !== null && remainingQuota <= 0 && "（已用尽，可清理已使用或过期的兑换码后重试）"}
+                  </p>
+                  {quotaLoading && <p className="text-xs text-muted-foreground">正在同步配额...</p>}
+                  {quotaError && (
+                    <p className="text-xs text-red-600">配额更新失败：{quotaError}</p>
+                  )}
+                </div>
                 <Button
                   id="btn-generate-codes"
                   onClick={generateCodes}
-                  disabled={generateLoading || codeCount < 1}
+                  disabled={
+                    generateLoading ||
+                    codeCount < 1 ||
+                    (remainingQuota !== null && remainingQuota <= 0)
+                  }
                   className={`w-full bg-primary text-primary-foreground hover:bg-primary/90 ${isTouch ? "min-h-[48px] text-base" : ""}`}
                 >
                   {generateLoading ? (
@@ -1943,6 +2803,10 @@ export default function AdminDashboard() {
                 emptyMessage="暂无兑换码数据"
               />
             )}
+
+            <div className="border border-border/40 rounded-lg bg-card/50 backdrop-blur-sm overflow-hidden">
+              <AdminRateLimitDashboard />
+            </div>
           </div>
         )}
 
@@ -1985,6 +2849,16 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">母号看板</h2>
               <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setFormError(null)
+                    setMotherFormState(getEmptyMotherFormState())
+                    setCreateDialogOpen(true)
+                  }}
+                >
+                  新增母号
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => loadMothers()} disabled={loading}>
                   <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} /> 刷新
                 </Button>
@@ -2006,110 +2880,540 @@ export default function AdminDashboard() {
                         座位：{used}/{total} （{pct}%）
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="mt-3 text-xs text-muted-foreground">
-                        团队：{m.teams.filter(t => t.is_enabled).map(t => t.team_name || t.team_id).join("，") || "无"}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
+                  <CardContent>
+                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      团队：{m.teams.filter(t => t.is_enabled).map(t => t.team_name || t.team_id).join("，") || "无"}
+                    </div>
+                  </CardContent>
+                  <CardFooter className="pt-4 flex items-center justify-between gap-2">
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setEditingMother(m)
+                          setEditDialogOpen(true)
+                        }}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(m.name, "账号名")}
+                      >
+                        复制名称
+                      </Button>
+                    </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => deleteMother(m.id)}
+                    >
+                      删除
+                    </Button>
+                  </CardFooter>
+                </Card>
+              )
+            })}
           </div>
+        </div>
         )}
 
         {currentTab === "bulk-import" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">批量导入母号</h2>
-              <div className="flex gap-2">
-                <input
-                  type="file"
-                  accept=".json,.jsonl,.ndjson,.txt"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) handleBulkFile(f)
-                  }}
-                  className="text-sm"
-                />
-                <Button variant="outline" size="sm" onClick={() => setBulkItems([])}>
-                  清空
-                </Button>
-                <Button variant="outline" size="sm" onClick={bulkValidate} disabled={bulkLoading || bulkItems.length === 0}>
-                  校验
-                </Button>
-                <Button onClick={bulkImport} disabled={bulkLoading || bulkItems.length === 0}>
-                  导入
-                </Button>
-              </div>
-            </div>
+          <BulkMotherImport
+            onRefreshMothers={() => {
+              loadMothers()
+            }}
+            onRefreshStats={() => {
+              loadStats()
+            }}
+            onRefreshQuota={() => loadQuota()}
+            onRefreshHistory={() => loadBulkHistory(true)}
+          />
+        )}
 
+        {currentTab === "bulk-history" && (
+          <div className="space-y-4">
+            {bulkHistoryError && (
+              <Alert className="border-red-500/50 bg-red-500/10">
+                <AlertDescription className="text-red-600 text-sm">{bulkHistoryError}</AlertDescription>
+              </Alert>
+            )}
+            <BulkHistoryPanel
+              entries={bulkHistory}
+              loading={bulkHistoryLoading}
+              onRefresh={() => loadBulkHistory(true)}
+            />
+          </div>
+        )}
+
+        {currentTab === "overview" && (
+          <div className="space-y-4">
             <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">从文本粘贴</CardTitle>
-                <CardDescription>每行一条，格式：邮箱---accessToken（也支持空格分隔）</CardDescription>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-primary" />
+                  系统状态
+                </CardTitle>
+                <CardDescription>后端运行情况与关键指标</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <textarea
-                  value={bulkText}
-                  onChange={(e) => setBulkText(e.target.value)}
-                  className="w-full min-h-[140px] p-3 rounded border border-border/40 bg-background/50 text-sm font-mono"
-                  placeholder={`user1@example.com---token1\nuser2@example.com---token2`}
-                />
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setBulkText(""); setBulkItems([]) }}>清空</Button>
-                  <Button size="sm" onClick={handleBulkPaste}>解析到列表</Button>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">后端服务</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          serviceStatus.backend === "online"
+                            ? "bg-green-500 animate-pulse"
+                            : serviceStatus.backend === "offline"
+                              ? "bg-red-500"
+                              : "bg-yellow-500 animate-pulse"
+                        }`}
+                      />
+                      <span className="font-medium">
+                        {serviceStatus.backend === "online"
+                          ? "在线"
+                          : serviceStatus.backend === "offline"
+                            ? "离线"
+                            : "检查中"}
+                      </span>
+                    </div>
+                    {serviceStatus.lastCheck && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        最近检查：{new Date(serviceStatus.lastCheck).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">自动刷新</p>
+                    <div className="mt-1 font-medium">{autoRefresh ? "已开启" : "已关闭"}</div>
+                    <p className="mt-1 text-xs text-muted-foreground">可在顶部切换自动刷新</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">待处理邀请</p>
+                    <div className="mt-1 font-medium text-lg">
+                      {stats?.pending_invites ?? 0}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">成功/失败：{stats?.successful_invites ?? 0} / {stats?.status_breakdown?.failed ?? 0}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadStats}
+                    disabled={statsLoading}
+                    className="bg-transparent"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${statsLoading ? "animate-spin" : ""}`} />
+                    刷新统计
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentTab("codes-status")}
+                  >
+                    查看限流仪表板
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentTab("audit")}
+                  >
+                    查看审计日志
+                  </Button>
                 </div>
               </CardContent>
             </Card>
 
-            <div className="space-y-3">
-              {bulkItems.length === 0 ? (
-                <div className="text-center text-muted-foreground py-8">可选择批量文件（JSON/JSONL/文本）或在上方粘贴“邮箱---accessToken”</div>
-              ) : (
-                bulkItems.map((it, i) => (
-                  <Card key={i} className={`border ${it.valid === false ? 'border-red-500/50' : 'border-border/40'} bg-card/50`}>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base">{it.name || '(未命名)'}</CardTitle>
-                      {it.warnings && it.warnings.length > 0 && (
-                        <CardDescription className="text-xs text-yellow-600">{it.warnings.join('；')}</CardDescription>
-                      )}
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {(it.teams || []).map((t, idx) => (
-                          <div key={idx} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center">
-                            <div className="text-xs sm:text-sm text-muted-foreground">Team ID</div>
-                            <div className="sm:col-span-1">
-                              <code className="text-xs sm:text-sm">{t.team_id}</code>
-                            </div>
-                            <div className="text-xs sm:text-sm text-muted-foreground">Team 名称</div>
-                            <div className="sm:col-span-1">
-                              <Input value={t.team_name || ''} onChange={(e) => updateTeamName(i, idx, e.target.value)} />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button size="sm" variant={t.is_default ? 'secondary' : 'outline'} onClick={() => setDefaultTeam(i, idx)}>
-                                {t.is_default ? '默认' : '设为默认'}
-                              </Button>
-                              <Button size="sm" variant={t.is_enabled !== false ? 'secondary' : 'outline'} onClick={() => toggleTeamEnabled(i, idx)}>
-                                {t.is_enabled !== false ? '启用' : '禁用'}
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+            {stats && (
+              <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle>核心指标</CardTitle>
+                  <CardDescription>邀请与兑换码整体情况</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="p-4 rounded-lg border border-border/40 bg-background/40">
+                      <p className="text-sm text-muted-foreground">总兑换码</p>
+                      <p className="text-2xl font-semibold mt-1">{stats.total_codes}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        已使用 {stats.used_codes} ({stats.total_codes > 0 ? ((stats.used_codes / stats.total_codes) * 100).toFixed(1) : 0}%)
+                      </p>
+                    </div>
+                    <div className="p-4 rounded-lg border border-border/40 bg-background/40">
+                      <p className="text-sm text-muted-foreground">活跃团队</p>
+                      <p className="text-2xl font-semibold mt-1">{stats.active_teams}</p>
+                      <p className="text-xs text-muted-foreground mt-1">母号数量 {stats.mother_usage.length}</p>
+                    </div>
+                    <div className="p-4 rounded-lg border border-border/40 bg-background/40">
+                      <p className="text-sm text-muted-foreground">可用额度</p>
+                      <p className="text-2xl font-semibold mt-1">{remainingQuota ?? 0}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        最大容量 {maxCodeCapacity ?? stats.max_code_capacity ?? 0} · 活跃兑换码 {activeCodesCount ?? stats.active_codes ?? 0}
+                      </p>
+                    </div>
+                    <div className="p-4 rounded-lg border border-border/40 bg-background/40">
+                      <p className="text-sm text-muted-foreground">今日邀请</p>
+                      <p className="text-2xl font-semibold mt-1">{quickStats.todayInvites}</p>
+                      <p className="text-xs text-muted-foreground mt-1">今日兑换 {quickStats.todayRedemptions ?? 0}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>最近审计事件</CardTitle>
+                  <CardDescription>显示最近 5 条管理员操作</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setCurrentTab("audit")}>
+                  查看全部
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {auditLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="h-10 rounded bg-muted/40 animate-pulse" />
+                    ))}
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无审计记录</p>
+                ) : (
+                  <div className="space-y-3">
+                    {auditLogs.slice(0, 5).map((log) => (
+                      <div key={log.id} className="p-3 rounded-lg border border-border/40 bg-background/40">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium">{log.actor}</span>
+                          <span className="text-muted-foreground">
+                            {new Date(log.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-sm mt-1 text-foreground">
+                          {log.action}
+                          {log.target_type && ` · ${log.target_type}`}
+                          {log.target_id && ` #${log.target_id}`}
+                        </p>
+                        {log.payload_redacted && (
+                          <p className="mt-1 text-xs text-muted-foreground">{log.payload_redacted}</p>
+                        )}
                       </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
 
-        {!["users", "codes", "mothers", "bulk-import"].includes(currentTab) && (
+        {currentTab === "audit" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">审计日志</h2>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={loadAuditLogs} disabled={auditLoading}>
+                  <RefreshCw className={`w-4 h-4 mr-2 ${auditLoading ? "animate-spin" : ""}`} />
+                  刷新
+                </Button>
+              </div>
+            </div>
+            {auditError && (
+              <Alert className="border-red-500/50 bg-red-500/10">
+                <AlertDescription className="text-red-600">{auditError}</AlertDescription>
+              </Alert>
+            )}
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+              <CardContent className="space-y-3 pt-6">
+                {auditLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className="h-12 rounded bg-muted/40 animate-pulse" />
+                    ))}
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无审计记录</p>
+                ) : (
+                  auditLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="border border-border/40 rounded-lg p-3 hover:border-primary/40 transition-colors"
+                    >
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium text-foreground">{log.actor}</span>
+                        <span className="text-muted-foreground">
+                          {new Date(log.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-sm text-foreground">
+                        {log.action}
+                        {log.target_type && ` · ${log.target_type}`}
+                        {log.target_id && ` #${log.target_id}`}
+                      </div>
+                      {log.payload_redacted && (
+                        <div className="mt-1 text-xs text-muted-foreground">{log.payload_redacted}</div>
+                      )}
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {log.ip && <span>IP: {log.ip} </span>}
+                        {log.ua && <span>UA: {log.ua}</span>}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {currentTab === "settings" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <KeyRound className="w-5 h-5 text-primary" />
+                  修改管理员密码
+                </CardTitle>
+                <CardDescription>更新默认管理员密码，建议定期轮换</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {changePasswordError && (
+                  <Alert className="mb-4 border-red-500/50 bg-red-500/10">
+                    <AlertDescription className="text-red-600">{changePasswordError}</AlertDescription>
+                  </Alert>
+                )}
+                <form onSubmit={handleChangePasswordSubmit} className="space-y-3">
+                  <div>
+                    <Label htmlFor="oldPassword">旧密码</Label>
+                    <Input
+                      id="oldPassword"
+                      type="password"
+                      value={changePasswordForm.oldPassword}
+                      onChange={(e) =>
+                        setChangePasswordForm((prev) => ({ ...prev, oldPassword: e.target.value }))
+                      }
+                      required
+                      className="mt-1 bg-background/50 border-border/60"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="newPassword">新密码</Label>
+                    <Input
+                      id="newPassword"
+                      type="password"
+                      value={changePasswordForm.newPassword}
+                      onChange={(e) =>
+                        setChangePasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                      }
+                      required
+                      className="mt-1 bg-background/50 border-border/60"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="confirmPassword">确认新密码</Label>
+                    <Input
+                      id="confirmPassword"
+                      type="password"
+                      value={changePasswordForm.confirmPassword}
+                      onChange={(e) =>
+                        setChangePasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))
+                      }
+                      required
+                      className="mt-1 bg-background/50 border-border/60"
+                    />
+                  </div>
+                  <Button type="submit" disabled={changePasswordLoading} className="w-full">
+                    {changePasswordLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        更新中...
+                      </>
+                    ) : (
+                      "更新密码"
+                    )}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileInput className="w-5 h-5 text-primary" />
+                  从 Cookie 提取访问令牌
+                </CardTitle>
+                <CardDescription>粘贴 ChatGPT 企业后台 Cookie，快速生成母号令牌</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {importCookieError && (
+                  <Alert className="border-red-500/50 bg-red-500/10">
+                    <AlertDescription className="text-red-600">{importCookieError}</AlertDescription>
+                  </Alert>
+                )}
+                <Textarea
+                  value={importCookieInput}
+                  onChange={(e) => setImportCookieInput(e.target.value)}
+                  placeholder="__Secure-next-auth.session-token=..."
+                  className="min-h-[120px] bg-background/50 border-border/60"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setImportCookieInput("")}>
+                    清空
+                  </Button>
+                  <Button size="sm" onClick={handleImportCookie} disabled={importCookieLoading}>
+                    {importCookieLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        解析中...
+                      </>
+                    ) : (
+                      "生成访问令牌"
+                    )}
+                  </Button>
+                </div>
+                {importCookieResult && (
+                  <div className="rounded-lg border border-border/40 bg-background/40 p-3 text-sm space-y-1">
+                    <div>邮箱：{importCookieResult.user_email || "未知"}</div>
+                    <div>账号 ID：{importCookieResult.account_id || "未知"}</div>
+                    <div>过期时间：{importCookieResult.token_expires_at || "未知"}</div>
+                    <div className="text-xs text-muted-foreground">
+                      已自动填充到“新增母号”表单，可直接保存。
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Power className="w-5 h-5 text-primary" />
+                  会话管理
+                </CardTitle>
+                <CardDescription>立即撤销所有管理员会话，强制重新登录</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  如果怀疑管理员密码泄露，可立即撤销所有会话，确保只有新密码持有人可以再次登录。
+                </p>
+                <Button
+                  variant="destructive"
+                  onClick={handleLogoutAll}
+                  disabled={logoutAllLoading}
+                >
+                  {logoutAllLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      正在撤销...
+                    </>
+                  ) : (
+                    "撤销全部会话"
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/40 bg-card/50 backdrop-blur-sm lg:col-span-2">
+              <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-primary" />
+                    数据库性能监控
+                  </CardTitle>
+                  <CardDescription>查询统计与慢查询追踪</CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={loadPerformanceStats} disabled={performanceLoading}>
+                    <RefreshCw className={`w-4 h-4 mr-2 ${performanceLoading ? "animate-spin" : ""}`} />
+                    刷新
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={togglePerformanceMonitoring}>
+                    {performanceStats?.enabled ? "关闭监控" : "开启监控"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={resetPerformanceStats}>
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    重置
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {performanceError && (
+                  <Alert className="border-red-500/50 bg-red-500/10">
+                    <AlertDescription className="text-red-600">{performanceError}</AlertDescription>
+                  </Alert>
+                )}
+                {performanceLoading ? (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="h-10 rounded bg-muted/40 animate-pulse" />
+                    ))}
+                  </div>
+                ) : performanceStats ? (
+                  <>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span>监控状态：</span>
+                      <span className={`font-medium ${performanceStats.enabled ? "text-green-600" : "text-muted-foreground"}`}>
+                        {performanceStats.enabled ? "运行中" : "已关闭"}
+                      </span>
+                      <span className="ml-4 text-muted-foreground">
+                        累积操作：{performanceStats.total_operations}
+                      </span>
+                    </div>
+                    {Object.entries(performanceStats.operations || {}).length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium mb-2">热点操作</p>
+                        <div className="space-y-2">
+                          {Object.entries(performanceStats.operations || {})
+                            .slice(0, 5)
+                            .map(([key, value]) => (
+                              <div
+                                key={key}
+                                className="flex items-center justify-between text-sm border border-border/30 rounded-md px-3 py-2 bg-background/40"
+                              >
+                                <span className="font-medium truncate pr-3">{key}</span>
+                                <span className="text-muted-foreground">
+                                  次数：{value?.count ?? 0}，平均 {value?.avg_time_ms?.toFixed ? value.avg_time_ms.toFixed(1) : value?.avg_time_ms ?? 0} ms
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    {performanceStats.slow_queries?.length ? (
+                      <div>
+                        <p className="text-sm font-medium mb-2">慢查询</p>
+                        <div className="space-y-2">
+                          {performanceStats.slow_queries.slice(0, 5).map((item, idx) => (
+                            <div key={idx} className="border border-border/30 rounded-md px-3 py-2 bg-background/40 text-sm">
+                              <div className="text-muted-foreground">
+                                {item.duration_ms} ms · {item.last_executed_at ? new Date(item.last_executed_at).toLocaleString() : "未知时间"}
+                              </div>
+                              <div className="mt-1 font-mono text-xs break-all text-foreground">
+                                {item.query}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">暂无慢查询记录</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">性能监控数据不可用</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {!["users", "codes", "mothers", "bulk-import", "bulk-history", "overview", "audit", "settings", "codes-status"].includes(currentTab) && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold">系统概览</h2>
             <div className="text-center text-muted-foreground py-8">
@@ -2120,6 +3424,41 @@ export default function AdminDashboard() {
       </main>
 
       <MobileFAB actions={fabActions} />
+      <MotherFormDialog
+        mode="create"
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open)
+          if (!open) {
+            setMotherFormState(getEmptyMotherFormState())
+            setFormError(null)
+          }
+        }}
+        form={motherFormState}
+        onFormChange={(updater) => setMotherFormState((prev) => updater(prev))}
+        onSubmit={handleCreateMother}
+        loading={createMotherLoading}
+        error={formError}
+      />
+      <MotherFormDialog
+        mode="edit"
+        open={editDialogOpen && !!editingMother}
+        onOpenChange={(open) => {
+          setEditDialogOpen(open)
+          if (!open) {
+            setEditingMother(null)
+            setFormError(null)
+          }
+        }}
+        form={motherFormState}
+        onFormChange={(updater) => setMotherFormState((prev) => updater(prev))}
+        onSubmit={async (data) => {
+          if (!editingMother) return
+          await handleUpdateMother(editingMother.id, data)
+        }}
+        loading={editMotherLoading}
+        error={formError}
+      />
     </div>
   )
 }

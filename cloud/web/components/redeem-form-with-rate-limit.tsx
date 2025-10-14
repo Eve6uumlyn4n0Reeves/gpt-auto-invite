@@ -155,7 +155,6 @@ export const RedeemFormWithRateLimit: React.FC = () => {
           </div>
           <RateLimitStatusComponent
             key={rateLimitKey}
-            key={rateLimitKey}
             showDetails={false}
             className="mb-4"
           />

@@ -126,16 +126,16 @@ export const RedeemFormEnhanced: React.FC = () => {
   const isFormValid = code.trim().length >= 6 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
 
   return (
-    <div className="w-full max-w-lg space-y-6">
+    <div className="w-full max-w-xl mx-auto space-y-6 select-text">
       <EnhancedCard className="shadow-xl">
-        <CardHeader className="text-center">
+        <CardHeader className="text-center space-y-4">
           <div className="w-16 h-16 bg-gradient-to-br from-primary to-brand-secondary rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <Shield className="w-8 h-8 text-primary-foreground" />
           </div>
           <CardTitle className="text-2xl font-bold bg-gradient-to-r from-primary to-brand-secondary bg-clip-text text-transparent">
             兑换您的席位
           </CardTitle>
-          <CardDescription className="text-muted-foreground">
+          <CardDescription className="text-muted-foreground text-base leading-relaxed mt-1">
             输入您的兑换码和邮箱地址，我们将自动为您分配最优的团队席位
           </CardDescription>
         </CardHeader>

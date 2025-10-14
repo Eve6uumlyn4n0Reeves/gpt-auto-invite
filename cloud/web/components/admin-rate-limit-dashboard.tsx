@@ -287,8 +287,8 @@ export function AdminRateLimitDashboard() {
                 <div>
                   <span className="text-gray-500">最后允许:</span>
                   <span className="ml-2 font-medium">
-                    {selectedStats.lastAllowedSeconds
-                      ? new Date(selectedStats.lastAllowedSeconds * 1000).toLocaleString()
+                    {selectedStats.lastAllowed
+                      ? new Date(selectedStats.lastAllowed * 1000).toLocaleString()
                       : '无记录'
                     }
                   </span>
