@@ -32,6 +32,8 @@
 - 自动获取 accessToken
 - Cookie 一键导入功能
 - 批量导出/上传云端功能
+- 远程录入（Ingest API，免管理员登录，可回退）
+- Base URL/Cloud URL/开关持久化到 `~/.gpt_invite_gui.json`
 
 ## 📁 项目结构
 
@@ -89,6 +91,7 @@ cd "gpt invite"
 ```bash
 cd cloud/backend
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -133,6 +136,10 @@ python -m playwright install chromium
 python main.py
 ```
 
+GUI 小贴士
+- 在界面勾选“使用 Ingest API（无需管理员登录）”并填写 Ingest 密钥，单条/批量录入将优先通过云端 Ingest API；失败自动回退到管理员接口
+- 后端/云端地址、Ingest 开关与密钥会保存到 `~/.gpt_invite_gui.json`
+
 ## 📖 文档
 
 - [开发指南](./docs/DEVELOPMENT.md) - 详细的开发环境搭建和开发流程
@@ -163,13 +170,21 @@ python main.py
 - 座位占用：`held` (30秒超时) -> `used`
 - 使用行级锁防止并发冲突
 
+### 异步批量与回填（新增）
+- 批量任务异步化：后台队列支持“重发/取消/移除”，具备可见性超时与最多重试次数；管理台“任务”页面可查看进度
+- 接受状态回填：后台定期同步团队成员，把已加入的用户标记为 `accepted` 并回填 `member_id`
+
 ## 🔍 当前业务状态
 
 - **业务链路**：兑换码生成、用户兑换、邀请发送/重发、管理员审计与批量操作、配额统计和本地工具全部可用，前后端通过 Next.js 代理安全接入 FastAPI 服务。
 - **完成度**：安全防护（会话 + CSRF、中间件、生产环境配置校验）与可观测性（Prometheus 指标、性能监控、限流状态接口）到位；`python3 -m pytest` 覆盖健康检查、兑换流程、限流与 CSRF 等关键基线。
 - **优势亮点**：邀请服务批量检索空位并支持并发占位；后台统计接口汇总 7 日趋势与配额口径；管理员操作写入审计日志并配有限流防护。
-- **潜在卡点**：上游 ChatGPT API 为同步阻塞调用，缺少整体熔断/退避策略；限流与登录尝试在无 Redis 时退回单机内存，多实例部署需额外配套；批量操作与维护任务仍为同步循环，规模扩张时需关注性能。
-- **改进建议**：封装异步+重试的上游调用策略、预置共享限流存储或强制 Redis、补充邀请失败/批量接口等集成测试以提升回归保障。
+- **新增能力**：
+  - Ingest API 远程录号（HMAC 签名 + 限流 + CSRF 豁免）
+  - 异步批量任务（可见性超时 + 重试 + 原子占用）与“任务”看板
+  - 接受状态回填与 Prometheus 指标
+  - GUI 持久化配置与 Ingest 模式
+- **潜在卡点**：多实例下建议启用 Redis（分布式限流/锁），并在上游调用层继续加强熔断/退避策略
 
 ## 🔧 技术栈
 
@@ -224,6 +239,7 @@ graph TB
 - ✅ SQL 注入防护
 - ✅ XSS 攻击防护
 - ✅ CSRF 保护
+- ✅ HMAC 签名（Ingest API）
 - ✅ 输入数据验证与清理
 
 ## 📈 性能优化
@@ -234,6 +250,7 @@ graph TB
 - ✅ 静态资源缓存
 - ✅ API 响应缓存
 - ✅ 数据库连接池
+- ✅ 异步批量 + 可见性超时与重试
 
 ## 🤝 贡献指南
 
