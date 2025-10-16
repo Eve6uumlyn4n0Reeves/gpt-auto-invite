@@ -283,6 +283,25 @@ export function SettingsSection({
           )}
         </CardContent>
       </Card>
+
+      <Card className="border-border/40 bg-card/50 backdrop-blur-sm lg:col-span-2">
+        <CardHeader>
+          <CardTitle>远程录号（Ingest API）</CardTitle>
+          <CardDescription>
+            可在云端启用 Ingest API（HMAC 签名 + 限流）后，由 GUI 或受信任服务直接录入母号；详见文档。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          <p className="mb-2">启用：设置环境变量 <code>INGEST_API_ENABLED=true</code> 与 <code>INGEST_API_KEY</code>。</p>
+          <p className="mb-2">接口：<code>POST /api/ingest/mothers</code>，签名头：<code>X-Ingest-Ts</code> / <code>X-Ingest-Sign</code>。</p>
+          <a
+            className="underline text-primary"
+            href="/docs/API.md#ingest-api"
+            target="_blank"
+            rel="noreferrer"
+          >查看 Ingest API 文档</a>
+        </CardContent>
+      </Card>
     </div>
   )
 }

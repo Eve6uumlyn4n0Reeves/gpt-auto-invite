@@ -12,6 +12,7 @@
 - [管理员 API](#管理员-api)
 - [统计 API](#统计-api)
 - [系统 API](#系统-api)
+- [Ingest API](#ingest-api)
 
 ## 🌐 基础信息
 
@@ -1003,6 +1004,97 @@ BATCH1DEF456
   ],
   "enabled": true
 }
+```
+
+## 📦 Ingest API
+
+Ingest API 面向受信任的 GUI/服务端工具，用于“远程录号”（创建母号）。
+
+特性：
+- HMAC-SHA256 请求签名 + 时间戳
+- 按 IP 限流（默认 60 次/分钟）
+- CSRF 豁免（仅此路由）
+
+启用（环境变量）：
+- `INGEST_API_ENABLED=true`
+- `INGEST_API_KEY=<强随机密钥>`
+
+### 1. 创建母号（远程录入）
+
+**接口地址**: `POST /api/ingest/mothers`
+
+**认证**: 通过签名头部
+
+**频率限制**: 60 次/分钟/IP
+
+**签名头部**:
+
+```
+X-Ingest-Ts: <unix_timestamp_seconds>
+X-Ingest-Sign: hex(hmac_sha256(INGEST_API_KEY, method + "\n" + path + "\n" + ts + "\n" + sha256hex(body)))
+```
+
+签名说明：
+- method: 大写 HTTP 方法，如 `POST`
+- path: 路径部分，如 `/api/ingest/mothers`
+- ts: 与服务器相差不超过 ±300 秒
+- body: 原始请求体字节，取 SHA-256 的十六进制摘要作为参与签名字符串最后一行
+
+**请求体（与 `MotherCreateIn` 一致）**:
+
+```json
+{
+  "name": "mother@example.com",
+  "access_token": "sk-...",
+  "token_expires_at": "2025-12-31T23:59:59Z",
+  "notes": "optional",
+  "teams": [
+    { "team_id": "team-1", "team_name": "Team 1", "is_enabled": true, "is_default": true },
+    { "team_id": "team-2", "team_name": "Team 2", "is_enabled": true, "is_default": false }
+  ]
+}
+```
+
+字段说明：
+- `name` 必填；`access_token` 必填；`teams` 可为空（后续在管理台补录）
+- `token_expires_at` 可选；未提供时服务端按策略默认 +N 天
+
+**成功响应**:
+
+```json
+{ "ok": true, "mother_id": 123 }
+```
+
+**失败响应**:
+
+```json
+{ "detail": "Invalid signature" }
+```
+
+**示例（Python 生成签名）**:
+
+```python
+import time, hmac, hashlib, json, requests
+
+key = b"<INGEST_API_KEY>"
+path = "/api/ingest/mothers"
+method = "POST"
+ts = str(int(time.time()))
+body = json.dumps({
+  "name": "mother@example.com",
+  "access_token": "sk-...",
+  "teams": [{"team_id": "team-1", "is_enabled": True, "is_default": True}],
+}).encode("utf-8")
+body_hash = hashlib.sha256(body).hexdigest()
+msg = f"{method}\n{path}\n{ts}\n{body_hash}".encode("utf-8")
+sign = hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+r = requests.post(
+  f"http://localhost:8000{path}",
+  headers={"X-Ingest-Ts": ts, "X-Ingest-Sign": sign, "Content-Type": "application/json"},
+  data=body,
+)
+print(r.status_code, r.text)
 ```
 
 ### 4. 性能监控控制
