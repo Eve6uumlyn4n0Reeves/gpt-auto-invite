@@ -8,27 +8,39 @@ export async function POST(request: NextRequest) {
     const url = `${backendUrl}/api/admin/login`
 
     const headers = new Headers(request.headers)
-    headers.delete('host')
-    headers.delete('connection')
-    headers.set('X-Request-Source', 'nextjs-frontend')
+    headers.delete("host")
+    headers.delete("connection")
+    headers.set("X-Request-Source", "nextjs-frontend")
 
     const response = await fetch(url, {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify(body),
-      redirect: 'manual',
+      redirect: "manual",
     })
 
-    const data = await response.json()
+    const responseHeaders = new Headers(response.headers)
+    responseHeaders.delete("connection")
+    responseHeaders.delete("transfer-encoding")
 
-    return NextResponse.json(data, {
+    const responseBody = await response.text()
+    const nextResponse = new NextResponse(responseBody, {
       status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
     })
+
+    const setCookie = response.headers.get("set-cookie")
+    if (setCookie) {
+      nextResponse.headers.set("set-cookie", setCookie)
+    }
+
+    return nextResponse
   } catch (error) {
-    console.error('Admin login error:', error)
+    console.error("Admin login error:", error)
     return NextResponse.json(
-      { message: 'Login service unavailable' },
-      { status: 503 }
+      { message: "Login service unavailable" },
+      { status: 503 },
     )
   }
 }

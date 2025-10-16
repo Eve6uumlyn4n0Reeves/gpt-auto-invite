@@ -1,6 +1,7 @@
 import re
-from pydantic import BaseModel, Field, validator, EmailStr
 from typing import List, Optional
+
+from pydantic import BaseModel, Field, EmailStr, field_validator, ConfigDict
 from datetime import datetime
 
 # 常用验证正则表达式
@@ -15,14 +16,16 @@ class MotherTeamIn(BaseModel):
     is_enabled: bool = True
     is_default: bool = False
 
-    @validator('team_id')
-    def validate_team_id(cls, v):
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: str) -> str:
         if not TEAM_ID_REGEX.match(v):
             raise ValueError('团队ID只能包含字母、数字、下划线和连字符，长度1-50字符')
         return v
 
-    @validator('team_name')
-    def validate_team_name(cls, v):
+    @field_validator("team_name")
+    @classmethod
+    def validate_team_name(cls, v: Optional[str]) -> Optional[str]:
         if v and len(v.strip()) == 0:
             raise ValueError('团队名称不能为空字符串')
         return v.strip() if v else v
@@ -31,17 +34,19 @@ class MotherCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="母号名称")
     access_token: str = Field(..., min_length=10, max_length=500, description="访问令牌")
     token_expires_at: Optional[datetime] = None
-    teams: List[MotherTeamIn] = Field(default_factory=list, max_items=20, description="团队列表")
+    teams: List[MotherTeamIn] = Field(default_factory=list, max_length=20, description="团队列表")
     notes: Optional[str] = Field(None, max_length=500, description="备注")
 
-    @validator('name')
-    def validate_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
         if not MOTHER_NAME_REGEX.match(v):
             raise ValueError('母号名称只能包含字母、数字、点、下划线、百分号、加号、连字符和@符号，长度1-100字符')
         return v.strip()
 
-    @validator('access_token')
-    def validate_access_token(cls, v):
+    @field_validator("access_token")
+    @classmethod
+    def validate_access_token(cls, v: str) -> str:
         # 检查是否包含明显的恶意内容
         suspicious_patterns = ['<script', 'javascript:', 'vbscript:', 'onload=', 'onerror=']
         v_lower = v.lower()
@@ -50,8 +55,9 @@ class MotherCreateIn(BaseModel):
                 raise ValueError('访问令牌包含不安全的内容')
         return v
 
-    @validator('teams')
-    def validate_teams(cls, v):
+    @field_validator("teams")
+    @classmethod
+    def validate_teams(cls, v: List[MotherTeamIn]) -> List[MotherTeamIn]:
         if not v:
             return v
         # 检查是否有重复的team_id
@@ -70,8 +76,7 @@ class MotherOut(BaseModel):
     notes: Optional[str]
     teams: List[MotherTeamIn]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ImportCookieIn(BaseModel):
     cookie: str
@@ -86,20 +91,21 @@ class RedeemIn(BaseModel):
     code: str = Field(..., min_length=8, max_length=32, description="兑换码")
     email: EmailStr = Field(..., description="邮箱地址")
 
-    @validator('code')
-    def validate_code(cls, v):
-        v = v.strip().upper()
-        if not REDEEM_CODE_REGEX.match(v):
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        value = v.strip().upper()
+        if not REDEEM_CODE_REGEX.match(value):
             raise ValueError('兑换码只能包含字母和数字，长度8-32字符')
-        return v
+        return value
 
-    @validator('email')
-    def validate_email(cls, v):
-        # 额外的邮箱验证
-        v = v.lower().strip()
-        if len(v) > 254:  # RFC 5321 标准
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: EmailStr) -> EmailStr:
+        value = v.lower().strip()
+        if len(value) > 254:  # RFC 5321 标准
             raise ValueError('邮箱地址过长')
-        return v
+        return value
 
 class RedeemOut(BaseModel):
     success: bool
@@ -114,42 +120,48 @@ class BatchCodesIn(BaseModel):
     expires_at: Optional[datetime] = None
     batch_id: Optional[str] = Field(None, max_length=50, description="批次ID")
 
-    @validator('prefix')
-    def validate_prefix(cls, v):
+    @field_validator("prefix")
+    @classmethod
+    def validate_prefix(cls, v: Optional[str]) -> Optional[str]:
         if v:
-            v = v.strip().upper()
-            if not re.match(r'^[A-Z0-9]*$', v):
+            value = v.strip().upper()
+            if not re.match(r'^[A-Z0-9]*$', value):
                 raise ValueError('前缀只能包含大写字母和数字')
+            return value
         return v
 
-    @validator('batch_id')
-    def validate_batch_id(cls, v):
+    @field_validator("batch_id")
+    @classmethod
+    def validate_batch_id(cls, v: Optional[str]) -> Optional[str]:
         if v:
-            v = v.strip()
-            if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            value = v.strip()
+            if not re.match(r'^[a-zA-Z0-9_-]+$', value):
                 raise ValueError('批次ID只能包含字母、数字、下划线和连字符')
+            return value
         return v
 
 class BatchCodesOut(BaseModel):
     batch_id: str
     codes: List[str]
     # Quota info (optional)
-    enabled_teams: int | None = None
-    max_code_capacity: int | None = None
-    active_codes: int | None = None
-    remaining_quota: int | None = None
+    enabled_teams: Optional[int] = None
+    max_code_capacity: Optional[int] = None
+    active_codes: Optional[int] = None
+    remaining_quota: Optional[int] = None
 
 class ResendIn(BaseModel):
     email: EmailStr = Field(..., description="邮箱地址")
     team_id: Optional[str] = Field(None, max_length=50, description="团队ID")
     code: Optional[str] = Field(None, max_length=32, description="兑换码")
 
-    @validator('email')
-    def validate_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: EmailStr) -> EmailStr:
         return v.lower().strip()
 
-    @validator('team_id')
-    def validate_team_id(cls, v):
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
         if v and not TEAM_ID_REGEX.match(v):
             raise ValueError('团队ID格式不正确')
         return v.strip() if v else v
@@ -157,8 +169,9 @@ class ResendIn(BaseModel):
 class AdminLoginIn(BaseModel):
     password: str = Field(..., min_length=1, max_length=128, description="密码")
 
-    @validator('password')
-    def validate_password(cls, v):
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
         # 检查明显的SQL注入模式
         sql_patterns = ["'", '"', ';', '--', '/*', '*/', 'xp_', 'sp_', 'DROP', 'INSERT', 'UPDATE', 'DELETE']
         v_upper = v.upper()
@@ -174,29 +187,35 @@ class CancelInviteIn(BaseModel):
     email: EmailStr = Field(..., description="邮箱地址")
     team_id: str = Field(..., min_length=1, max_length=50, description="团队ID")
 
-    @validator('email')
-    def validate_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: EmailStr) -> EmailStr:
         return v.lower().strip()
 
-    @validator('team_id')
-    def validate_team_id(cls, v):
-        if not TEAM_ID_REGEX.match(v):
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: str) -> str:
+        value = v.strip()
+        if not TEAM_ID_REGEX.match(value):
             raise ValueError('团队ID格式不正确')
-        return v.strip()
+        return value
 
 class RemoveMemberIn(BaseModel):
     email: EmailStr = Field(..., description="邮箱地址")
     team_id: str = Field(..., min_length=1, max_length=50, description="团队ID")
 
-    @validator('email')
-    def validate_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: EmailStr) -> EmailStr:
         return v.lower().strip()
 
-    @validator('team_id')
-    def validate_team_id(cls, v):
-        if not TEAM_ID_REGEX.match(v):
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: str) -> str:
+        value = v.strip()
+        if not TEAM_ID_REGEX.match(value):
             raise ValueError('团队ID格式不正确')
-        return v.strip()
+        return value
 
 class ImportAccessTokenIn(BaseModel):
     access_token: str

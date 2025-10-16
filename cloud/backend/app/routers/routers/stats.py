@@ -1,21 +1,13 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, case, or_
-from app.database import SessionLocal
 from app import models
 from app.metrics import provider_metrics
-from app.routers.routers.admin import require_admin
+from app.routers.admin.dependencies import get_db, require_admin
 from app.utils.performance import monitor_session_queries, log_performance_summary
 from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/api/admin", tags=["admin-stats"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/stats")
 def stats(request: Request, db: Session = Depends(get_db)):

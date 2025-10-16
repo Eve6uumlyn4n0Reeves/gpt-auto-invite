@@ -1,24 +1,25 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Menu, X, Home, Users, CreditCard, BarChart3, Settings, LogOut, Upload, RefreshCw } from "lucide-react"
 import { useMobileGestures } from "@/hooks/use-mobile-gestures"
+import { ADMIN_TAB_ROUTES, type AdminTab } from "@/lib/admin-navigation"
 
 interface MobileNavigationProps {
-  currentTab: string
-  onTabChange: (tab: string) => void
+  currentTab: AdminTab
+  onTabChange?: (tab: AdminTab) => void
   onLogout: () => void
 }
 
-type TabId = string
-
 export function MobileNavigation({ currentTab, onTabChange, onLogout }: MobileNavigationProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const { isTouch, enableGestures } = useMobileGestures()
+  const { isTouch } = useMobileGestures()
+  const router = useRouter()
 
-  const navigationItems: Array<{ id: TabId; label: string; icon: any }> = [
+  const navigationItems: Array<{ id: AdminTab; label: string; icon: any }> = [
     { id: "overview", label: "概览", icon: Home },
     { id: "mothers", label: "母账号", icon: Users },
     { id: "codes-status", label: "码状态", icon: CreditCard },
@@ -46,8 +47,13 @@ export function MobileNavigation({ currentTab, onTabChange, onLogout }: MobileNa
     }
   }, [isTouch, isOpen])
 
-  const handleTabSelect = (tabId: string) => {
-    onTabChange(tabId)
+  const handleTabSelect = (tabId: AdminTab) => {
+    if (onTabChange) {
+      onTabChange(tabId)
+    } else {
+      const targetRoute = ADMIN_TAB_ROUTES[tabId]
+      router.push(targetRoute)
+    }
     setIsOpen(false)
   }
 

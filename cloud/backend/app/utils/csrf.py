@@ -1,12 +1,12 @@
 """
 CSRF Token 工具模块
 """
-import secrets
 import time
-from typing import Optional, Dict
+from typing import Optional
 from fastapi import Request, HTTPException
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 from app.config import settings
+from app.security import verify_session, unsign_session
 
 # 创建CSRF token序列化器
 csrf_serializer = URLSafeTimedSerializer(
@@ -40,7 +40,7 @@ class CSRFTokenManager:
             return False
 
     @staticmethod
-    def extract_token_from_request(request: Request) -> Optional[str]:
+    async def extract_token_from_request(request: Request) -> Optional[str]:
         """从请求中提取CSRF token"""
         # 1. 从Header中获取
         token = request.headers.get("X-CSRF-Token")
@@ -50,7 +50,7 @@ class CSRFTokenManager:
         # 2. 从Form中获取
         if request.method in ("POST", "PUT", "PATCH"):
             try:
-                form_data = request.form()
+                form_data = await request.form()
                 token = form_data.get("csrf_token")
                 if token:
                     return token
@@ -59,7 +59,7 @@ class CSRFTokenManager:
 
         # 3. 从JSON body中获取
         try:
-            json_data = request.json()
+            json_data = await request.json()
             if isinstance(json_data, dict):
                 token = json_data.get("csrf_token")
                 if token:
@@ -74,13 +74,20 @@ class CSRFTokenManager:
         """从请求中获取session ID"""
         # 从cookie中获取session
         session_cookie = request.cookies.get("admin_session")
-        if session_cookie:
-            return session_cookie
+        if not session_cookie:
+            return None
 
-        return None
+        if not verify_session(session_cookie, max_age_seconds=settings.admin_session_ttl_seconds):
+            return None
+
+        sid = unsign_session(session_cookie, max_age_seconds=settings.admin_session_ttl_seconds)
+        if not sid:
+            return None
+
+        return sid
 
 # CSRF Token中间件装饰器
-def require_csrf_token(request: Request) -> None:
+async def require_csrf_token(request: Request) -> None:
     """要求CSRF token的装饰器函数"""
     if request.method.upper() == "GET":
         return
@@ -91,7 +98,7 @@ def require_csrf_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="No session found")
 
     # 获取CSRF token
-    token = CSRFTokenManager.extract_token_from_request(request)
+    token = await CSRFTokenManager.extract_token_from_request(request)
     if not token:
         raise HTTPException(status_code=403, detail="CSRF token missing")
 

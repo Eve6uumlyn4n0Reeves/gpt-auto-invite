@@ -1,18 +1,10 @@
 from fastapi import APIRouter, Response, Request, Depends
 from app.metrics_prom import CONTENT_TYPE_LATEST, generate_latest
 from app.config import settings
-from app.database import SessionLocal
 from sqlalchemy.orm import Session
-from app.routers.routers.admin import require_admin
+from app.routers.admin.dependencies import get_db, require_admin
 
 router = APIRouter()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/metrics")
 def metrics(request: Request, db: Session = Depends(get_db)):

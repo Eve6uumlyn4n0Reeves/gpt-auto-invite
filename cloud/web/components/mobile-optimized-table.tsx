@@ -9,31 +9,31 @@ import { Badge } from "@/components/ui/badge"
 import { ChevronDown, ChevronRight, MoreVertical } from "lucide-react"
 import { useMobileGestures } from "@/hooks/use-mobile-gestures"
 
-interface TableColumn {
-  key: string
-  label: string
-  render?: (value: any, row: any) => React.ReactNode
+export interface MobileTableColumn<T = Record<string, unknown>> {
+  key: keyof T | string
+  label: React.ReactNode
+  render?: (value: any, row: T) => React.ReactNode
   mobile?: {
     priority: "high" | "medium" | "low"
     label?: string
   }
 }
 
-interface MobileOptimizedTableProps {
-  data: any[]
-  columns: TableColumn[]
-  onRowAction?: (action: string, row: any) => void
+interface MobileOptimizedTableProps<T = Record<string, unknown>> {
+  data: T[]
+  columns: MobileTableColumn<T>[]
+  onRowAction?: (action: string, row: T) => void
   loading?: boolean
   emptyMessage?: string
 }
 
-export function MobileOptimizedTable({
+export function MobileOptimizedTable<T = Record<string, unknown>>({
   data,
   columns,
   onRowAction,
   loading = false,
   emptyMessage = "暂无数据",
-}: MobileOptimizedTableProps) {
+}: MobileOptimizedTableProps<T>) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
   const { isTouch } = useMobileGestures()
 
@@ -47,8 +47,14 @@ export function MobileOptimizedTable({
     setExpandedRows(newExpanded)
   }
 
-  const getPriorityColumns = (priority: "high" | "medium" | "low") => {
-    return columns.filter((col) => col.mobile?.priority === priority)
+  const getPriorityColumns = (priority: "high" | "medium" | "low") =>
+    columns.filter((col) => col.mobile?.priority === priority)
+
+  const getCellValue = (row: T, columnKey: keyof T | string) => {
+    if (typeof columnKey === "string") {
+      return (row as Record<string, unknown>)[columnKey]
+    }
+    return row[columnKey]
   }
 
   const highPriorityColumns = getPriorityColumns("high")
@@ -97,11 +103,13 @@ export function MobileOptimizedTable({
                     {/* High Priority Fields */}
                     <div className="space-y-1">
                       {highPriorityColumns.map((column) => {
-                        const value = row[column.key]
-                        const displayValue = column.render ? column.render(value, row) : value
+                        const rawValue = getCellValue(row, column.key)
+                        const displayValue = column.render
+                          ? column.render(rawValue, row)
+                          : (rawValue as React.ReactNode)
 
                         return (
-                          <div key={column.key} className="flex items-center justify-between">
+                          <div key={String(column.key)} className="flex items-center justify-between">
                             <span className="text-sm font-medium text-foreground truncate">{displayValue}</span>
                           </div>
                         )
@@ -111,12 +119,17 @@ export function MobileOptimizedTable({
                       {mediumPriorityColumns.length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-2">
                           {mediumPriorityColumns.map((column) => {
-                            const value = row[column.key]
-                            const displayValue = column.render ? column.render(value, row) : value
+                            const rawValue = getCellValue(row, column.key)
+                            const displayValue = column.render
+                              ? column.render(rawValue, row)
+                              : (rawValue as React.ReactNode)
+                            const labelNode = column.mobile?.label ?? column.label
+                            const labelText = typeof labelNode === "string" ? labelNode : ""
 
                             return (
-                              <Badge key={column.key} variant="secondary" className="text-xs">
-                                {column.mobile?.label || column.label}: {displayValue}
+                              <Badge key={String(column.key)} variant="secondary" className="text-xs">
+                                {labelText && <span>{labelText}: </span>}
+                                {displayValue}
                               </Badge>
                             )
                           })}
@@ -154,13 +167,18 @@ export function MobileOptimizedTable({
                 <div className="px-4 pb-4 border-t border-border/40 bg-muted/20">
                   <div className="pt-3 space-y-2">
                     {lowPriorityColumns.map((column) => {
-                      const value = row[column.key]
-                      const displayValue = column.render ? column.render(value, row) : value
+                      const rawValue = getCellValue(row, column.key)
+                      const displayValue = column.render
+                        ? column.render(rawValue, row)
+                        : (rawValue as React.ReactNode)
+                      const labelNode = column.mobile?.label ?? column.label
+                      const labelText = typeof labelNode === "string" ? labelNode : ""
 
                       return (
-                        <div key={column.key} className="flex justify-between items-start">
+                        <div key={String(column.key)} className="flex justify-between items-start">
                           <span className="text-sm text-muted-foreground font-medium">
-                            {column.mobile?.label || column.label}:
+                            {labelText}
+                            {labelText ? ":" : ""}
                           </span>
                           <span className="text-sm text-foreground text-right ml-2">{displayValue}</span>
                         </div>

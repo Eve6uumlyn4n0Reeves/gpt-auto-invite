@@ -1,6 +1,6 @@
 import hashlib
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import update, select
 from datetime import datetime
@@ -15,9 +15,9 @@ def hash_code(code: str) -> str:
 def generate_codes(
     db: Session,
     count: int,
-    prefix: str | None,
-    expires_at: datetime | None,
-    batch_id: str | None,
+    prefix: Optional[str],
+    expires_at: Optional[datetime],
+    batch_id: Optional[str],
 ) -> Tuple[str, list[str]]:
     batch = batch_id or datetime.utcnow().strftime("%Y%m%d%H%M%S")
     codes: list[str] = []
@@ -45,7 +45,7 @@ def base36(b: bytes) -> str:
 
 def redeem_code(
     db: Session, code: str, email: str
-) -> tuple[bool, str, int | None, int | None, str | None]:
+) -> Tuple[bool, str, Optional[int], Optional[int], Optional[str]]:
     """
     Atomic redemption to prevent double-spend under concurrency.
     Strategy:
@@ -60,7 +60,7 @@ def redeem_code(
     dialect = getattr(getattr(db, "bind", None), "dialect", None)
     is_pg = bool(dialect and getattr(dialect, "name", "").startswith("postgres"))
 
-    row: models.RedeemCode | None = None
+    row: Optional[models.RedeemCode] = None
 
     if is_pg:
         # Row-level lock to avoid concurrent read of the same code

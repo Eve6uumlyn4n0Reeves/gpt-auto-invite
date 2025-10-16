@@ -1,8 +1,8 @@
 """
 安全中间件模块
 """
-import secrets
-from typing import Callable
+from typing import Callable, Iterable, Optional, Set
+from urllib.parse import urlparse
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -39,9 +39,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class CSRFMiddleware(BaseHTTPMiddleware):
     """CSRF防护中间件"""
 
-    def __init__(self, app: ASGIApp, excluded_paths: list = None):
+    def __init__(
+        self,
+        app: ASGIApp,
+        excluded_paths: Optional[list[str]] = None,
+        allowed_origins: Optional[Iterable[str]] = None,
+    ):
         super().__init__(app)
         self.excluded_paths = excluded_paths or ['/api/public/', '/api/health', '/docs', '/openapi.json']
+        self.allowed_origins: Set[str] = {
+            origin for origin in (self._normalize_origin(o) for o in (allowed_origins or [])) if origin
+        }
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # 对于GET请求和排除的路径，跳过CSRF检查
@@ -63,16 +71,21 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         expected_origin = f"{scheme}://{host}"
 
         # 验证Origin或Referer
+        expected_origin = self._normalize_origin(f"{scheme}://{host}") or ""
+        allowed_origins = set(self.allowed_origins)
+        if expected_origin:
+            allowed_origins.add(expected_origin)
+
         if origin:
-            if not self._is_same_origin(origin, expected_origin):
-                logger.warning(f"CSRF attempt blocked - Origin mismatch: {origin} != {expected_origin}")
+            if not self._is_allowed_origin(origin, allowed_origins):
+                logger.warning(f"CSRF attempt blocked - Origin mismatch: {origin} not in {allowed_origins}")
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "CSRF validation failed"}
                 )
         elif referer:
-            if not self._is_same_origin(referer, expected_origin):
-                logger.warning(f"CSRF attempt blocked - Referer mismatch: {referer} != {expected_origin}")
+            if not self._is_allowed_origin(referer, allowed_origins):
+                logger.warning(f"CSRF attempt blocked - Referer mismatch: {referer} not in {allowed_origins}")
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "CSRF validation failed"}
@@ -89,9 +102,20 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         return await call_next(request)
 
-    def _is_same_origin(self, url: str, expected_origin: str) -> bool:
-        """检查是否为同源"""
-        return url.startswith(expected_origin)
+    def _normalize_origin(self, url: str) -> Optional[str]:
+        """规范化 Origin/Referer 为 scheme://host"""
+        try:
+            parsed = urlparse(url)
+            if not parsed.scheme or not parsed.netloc:
+                return None
+            return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+        except Exception:
+            return None
+
+    def _is_allowed_origin(self, url: str, allowed_origins: Set[str]) -> bool:
+        """检查是否为允许的来源"""
+        normalized = self._normalize_origin(url)
+        return bool(normalized and normalized in allowed_origins)
 
     def _is_browser(self, user_agent: str) -> bool:
         """简单判断是否为浏览器请求"""

@@ -26,3 +26,29 @@ export interface QuotaSnapshot {
   pending_invites: number
   generated_at: string
 }
+
+export interface ImportCookieResult {
+  access_token: string
+  token_expires_at?: string | null
+  user_email?: string | null
+  account_id?: string | null
+}
+
+export interface PerformanceOperationMetrics {
+  count?: number
+  total_time_ms?: number
+  avg_time_ms?: number
+}
+
+export interface PerformanceSlowQuery {
+  query: string
+  duration_ms: number
+  last_executed_at?: string | null
+}
+
+export interface PerformanceStatsResponse {
+  total_operations: number
+  operations: Record<string, PerformanceOperationMetrics>
+  slow_queries: PerformanceSlowQuery[]
+  enabled: boolean
+}

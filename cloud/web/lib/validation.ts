@@ -12,12 +12,14 @@ const enhancedEmailSchema = z
   }, "不支持临时邮箱地址")
 
 // 兑换请求验证schema
+export const redeemCodeRegex = /^[A-Za-z0-9]{8,32}$/
+
 export const redeemSchema = z.object({
   code: z
     .string()
-    .min(6, "兑换码至少6位")
-    .max(32, "兑换码最多32位")
-    .regex(/^[A-Za-z0-9-]+$/, "兑换码只能包含字母、数字和连字符"),
+    .min(8, "兑换码长度需为 8-32 位")
+    .max(32, "兑换码长度需为 8-32 位")
+    .regex(redeemCodeRegex, "兑换码只能包含字母和数字"),
   email: enhancedEmailSchema,
 })
 
@@ -61,7 +63,7 @@ export const changePasswordSchema = z
 
 // 生成兑换码验证schema
 export const generateCodesSchema = z.object({
-  count: z.number().int("数量必须是整数").min(1, "至少生成1个兑换码").max(10000, "最多生成10000个兑换码"),
+  count: z.number().int("数量必须是整数").min(1, "至少生成1个兑换码").max(1000, "最多生成1000个兑换码"),
   prefix: z
     .string()
     .max(10, "前缀最多10个字符")

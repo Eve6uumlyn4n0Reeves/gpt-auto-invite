@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from "react"
 import { Clock, RefreshCw, Inbox, UploadCloud } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,7 +20,7 @@ const operationLabels: Record<string, string> = {
   code_bulk_action: "兑换码批量操作",
 }
 
-const operationIcons: Record<string, React.ReactNode> = {
+const operationIcons: Record<string, ReactNode> = {
   mother_import: <Inbox className="h-4 w-4" />,
   mother_import_text: <Inbox className="h-4 w-4" />,
   code_generate: <UploadCloud className="h-4 w-4" />,

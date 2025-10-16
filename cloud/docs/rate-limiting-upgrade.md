@@ -319,7 +319,8 @@ git checkout .env
 # 恢复代码
 git checkout HEAD~1 -- app/main.py
 git checkout HEAD~1 -- app/routers/routers/public.py
-git checkout HEAD~1 -- app/routers/routers/admin.py
+git checkout HEAD~1 -- app/routers/admin/__init__.py
+git checkout HEAD~1 -- app/routers/admin/*.py
 ```
 
 ### 3. 重启旧服务

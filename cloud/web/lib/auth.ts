@@ -5,12 +5,16 @@ export interface AuthResult {
   user?: string
 }
 
-export async function checkAdminAuth(): Promise<AuthResult> {
+export async function checkAdminAuth(sessionToken?: string): Promise<AuthResult> {
   try {
-    const cookieStore = cookies()
-    const adminSession = cookieStore.get("admin_session")
+    const token =
+      sessionToken ??
+      (() => {
+        const cookieStore = cookies()
+        return cookieStore.get("admin_session")?.value
+      })()
 
-    if (!adminSession?.value) {
+    if (!token) {
       return { authenticated: false }
     }
 
@@ -20,12 +24,13 @@ export async function checkAdminAuth(): Promise<AuthResult> {
       method: "GET",
       headers: {
         // forward only admin_session cookie
-        cookie: `admin_session=${adminSession.value}`,
+        cookie: `admin_session=${token}`,
       },
+      cache: "no-store",
     })
     if (!resp.ok) return { authenticated: false }
     const data = (await resp.json()) as { authenticated?: boolean }
-    return { authenticated: !!data?.authenticated, user: !!data?.authenticated ? "admin" : undefined }
+    return { authenticated: !!data?.authenticated, user: data?.authenticated ? "admin" : undefined }
   } catch (error) {
     console.error("Auth check error:", error)
     return { authenticated: false }

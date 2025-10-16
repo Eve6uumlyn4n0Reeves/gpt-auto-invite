@@ -33,6 +33,7 @@ class MemoryTokenBucketLimiter(RateLimiter):
         self._default = default_config
         self._buckets: Dict[str, _Bucket] = {}
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._configs: Dict[str, RateLimitConfig] = {}
         # 简单统计
         self._allowed: Dict[str, int] = defaultdict(int)
         self._denied: Dict[str, int] = defaultdict(int)
@@ -118,11 +119,11 @@ class MemoryTokenBucketLimiter(RateLimiter):
         )
 
     async def set_config(self, config_id: str, config: RateLimitConfig) -> None:
-        # 内存中：无操作；仅为接口兼容性提供
-        return None
+        config.validate()
+        self._configs[config_id] = config
 
     async def get_config(self, config_id: str) -> Optional[RateLimitConfig]:
-        return None
+        return self._configs.get(config_id)
 
     async def delete_config(self, config_id: str) -> None:
-        return None
+        self._configs.pop(config_id, None)

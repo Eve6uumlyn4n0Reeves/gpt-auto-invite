@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CheckCircle, AlertCircle, Loader2, Mail, Key, RefreshCw, Shield, Zap } from 'lucide-react'
+import { redeemCodeRegex } from '@/lib/validation'
 
 interface RedeemResponse {
   success: boolean
@@ -32,8 +33,8 @@ export const RedeemFormEnhanced: React.FC = () => {
 
     if (!code.trim()) {
       errors.push('请输入兑换码')
-    } else if (code.trim().length < 6) {
-      errors.push('兑换码长度至少6位')
+    } else if (!redeemCodeRegex.test(code.trim())) {
+      errors.push('兑换码长度需为 8-32 位且仅包含字母与数字')
     }
 
     if (!email.trim()) {
@@ -123,7 +124,7 @@ export const RedeemFormEnhanced: React.FC = () => {
     }
   }
 
-  const isFormValid = code.trim().length >= 6 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const isFormValid = redeemCodeRegex.test(code.trim()) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
 
   return (
     <div className="w-full max-w-xl mx-auto space-y-6 select-text">
@@ -141,7 +142,7 @@ export const RedeemFormEnhanced: React.FC = () => {
         </CardHeader>
 
         <CardContent className="space-y-6">
-          <form onSubmit={onSubmit} className="space-y-6">
+          <form onSubmit={onSubmit} className="space-y-6" data-testid="redeem-form">
             {/* Code Input */}
             <div className="space-y-2">
               <Label htmlFor="code" className="flex items-center space-x-2 text-sm font-medium">
@@ -168,9 +169,11 @@ export const RedeemFormEnhanced: React.FC = () => {
                 />
                 {code && (
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      code.length >= 6 ? 'bg-green-500' : 'bg-yellow-500'
-                    }`}></div>
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        redeemCodeRegex.test(code.trim()) ? 'bg-green-500' : 'bg-yellow-500'
+                      }`}
+                    ></div>
                   </div>
                 )}
               </div>
@@ -213,7 +216,7 @@ export const RedeemFormEnhanced: React.FC = () => {
 
             {/* Error Alert */}
             {error && (
-              <Alert className="border-red-500/50 bg-red-500/10 animate-fade-in">
+              <Alert data-testid="redeem-error" className="border-red-500/50 bg-red-500/10 animate-fade-in">
                 <AlertCircle className="w-4 h-4 text-red-600" />
                 <AlertDescription className="text-red-600 text-sm">
                   {error}

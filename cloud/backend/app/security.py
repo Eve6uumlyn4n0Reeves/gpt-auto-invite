@@ -1,13 +1,48 @@
 import base64
 import os
 import time
+import logging
 from typing import Dict, Optional
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from passlib.hash import bcrypt
 from itsdangerous import TimestampSigner, BadSignature
+from redis import Redis
+from redis.exceptions import RedisError
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _login_attempts: Dict[str, list] = {}
+_login_attempts_store: Optional[Redis] = None
+_login_attempts_store_checked = False
+
+
+def _get_login_store() -> Optional[Redis]:
+    """尝试获取共享登录尝试存储（优先使用 Redis）"""
+    global _login_attempts_store, _login_attempts_store_checked
+    if _login_attempts_store is not None:
+        return _login_attempts_store
+    if _login_attempts_store_checked:
+        return None
+
+    _login_attempts_store_checked = True
+    try:
+        client = Redis.from_url(
+            settings.redis_url,
+            password=settings.redis_password,
+            decode_responses=True,
+        )
+        client.ping()
+        _login_attempts_store = client
+        logger.info("Login attempt store initialized with Redis")
+    except Exception as exc:
+        logger.warning("Falling back to in-memory login attempt tracking: %s", exc)
+        _login_attempts_store = None
+    return _login_attempts_store
+
+
+def _login_key(ip: str) -> str:
+    return f"admin:login_attempts:{ip}"
 
 def encrypt_token(plaintext: str) -> str:
     key = settings.encryption_key
@@ -35,6 +70,20 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def check_login_attempts(ip: str) -> bool:
     """检查IP是否被锁定"""
+    store = _get_login_store()
+    if store:
+        try:
+            attempts = store.get(_login_key(ip))
+            if attempts is None:
+                return True
+            return int(attempts) < settings.max_login_attempts
+        except (RedisError, ValueError) as exc:
+            logger.debug("Redis login attempt check failed: %s", exc)
+
+    return _check_login_attempts_memory(ip)
+
+
+def _check_login_attempts_memory(ip: str) -> bool:
     current_time = time.time()
     if ip not in _login_attempts:
         return True
@@ -44,11 +93,31 @@ def check_login_attempts(ip: str) -> bool:
         attempt_time for attempt_time in _login_attempts[ip]
         if current_time - attempt_time < settings.login_lockout_duration
     ]
-    
+
     return len(_login_attempts[ip]) < settings.max_login_attempts
 
 def record_login_attempt(ip: str, success: bool) -> None:
     """记录登录尝试"""
+    store = _get_login_store()
+    if store:
+        key = _login_key(ip)
+        try:
+            if success:
+                store.delete(key)
+                return
+            attempts = store.incr(key)
+            ttl = settings.login_lockout_duration
+            if ttl > 0:
+                store.expire(key, ttl)
+            logger.debug("Recorded failed login attempt via Redis. ip=%s attempts=%s", ip, attempts)
+            return
+        except RedisError as exc:
+            logger.debug("Redis login attempt record failed: %s", exc)
+
+    _record_login_attempt_memory(ip, success)
+
+
+def _record_login_attempt_memory(ip: str, success: bool) -> None:
     current_time = time.time()
     
     if success:
@@ -63,6 +132,20 @@ def record_login_attempt(ip: str, success: bool) -> None:
 
 def get_lockout_remaining(ip: str) -> int:
     """获取剩余锁定时间（秒）"""
+    store = _get_login_store()
+    if store:
+        try:
+            ttl = store.ttl(_login_key(ip))
+            if ttl is None or ttl < 0:
+                return 0
+            return int(ttl)
+        except RedisError as exc:
+            logger.debug("Redis login attempt TTL fetch failed: %s", exc)
+
+    return _get_lockout_remaining_memory(ip)
+
+
+def _get_lockout_remaining_memory(ip: str) -> int:
     if ip not in _login_attempts or not _login_attempts[ip]:
         return 0
     
@@ -105,7 +188,7 @@ def verify_session(signed: str, max_age_seconds: int = 7 * 24 * 3600) -> bool:
     except BadSignature:
         return False
 
-def unsign_session(signed: str, max_age_seconds: int = 7 * 24 * 3600) -> str | None:
+def unsign_session(signed: str, max_age_seconds: int = 7 * 24 * 3600) -> Optional[str]:
     try:
         val = _signer.unsign(signed, max_age=max_age_seconds)
         return val.decode("utf-8") if isinstance(val, (bytes, bytearray)) else str(val)
@@ -139,12 +222,16 @@ def get_security_headers(nonce: Optional[str] = None) -> Dict[str, str]:
         f"upgrade-insecure-requests"
     )
 
-    return {
+    headers = {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "X-XSS-Protection": "1; mode=block",
-        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
         "Content-Security-Policy": csp_policy,
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()"
     }
+
+    if settings.env in ("prod", "production"):
+        headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+
+    return headers

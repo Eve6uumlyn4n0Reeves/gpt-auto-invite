@@ -5,21 +5,12 @@ from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app.services.services.rate_limiter_service import get_rate_limiter
 from app.utils.utils.rate_limiter import RateLimiter
-from app.routers.routers.admin import require_admin
+from app.routers.admin.dependencies import get_db, require_admin
 from starlette.requests import Request
 
 router = APIRouter(prefix="/api/admin/rate-limit", tags=["rate-limit"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 async def get_limiter() -> RateLimiter:

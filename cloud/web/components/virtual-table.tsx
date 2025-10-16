@@ -5,9 +5,9 @@ import type React from "react"
 import { useMemo } from "react"
 import { useVirtualList } from "@/hooks/use-virtual-list"
 
-interface VirtualTableColumn<T> {
+export interface VirtualTableColumn<T> {
   key: keyof T | string
-  label: string
+  label: React.ReactNode
   width?: number
   render?: (value: any, row: T, index: number) => React.ReactNode
 }
@@ -32,7 +32,6 @@ export function VirtualTable<T extends Record<string, any>>({
   containerHeight,
   itemHeight = 50,
   onRowClick,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onRowAction,
   className = "",
   loading = false,
@@ -94,17 +93,24 @@ export function VirtualTable<T extends Record<string, any>>({
             const row = data[index]
             if (!row) return null
 
+            const handleRowInteraction = () => {
+              onRowClick?.(row, index)
+              onRowAction?.("rowClick", row)
+            }
+
+            const isInteractive = Boolean(onRowClick || onRowAction)
+
             return (
               <div
                 key={index}
                 className={`absolute left-0 right-0 flex border-b border-border/40 hover:bg-muted/20 transition-colors ${
-                  onRowClick ? "cursor-pointer" : ""
+                  isInteractive ? "cursor-pointer" : ""
                 } ${isScrolling ? "pointer-events-none" : ""}`}
                 style={{
                   top: start,
                   height: itemHeight,
                 }}
-                onClick={() => onRowClick?.(row, index)}
+                onClick={handleRowInteraction}
               >
                 {columns.map((column, colIndex) => (
                   <div

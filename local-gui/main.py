@@ -12,10 +12,15 @@ class BackendClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
+        self._csrf_token: Optional[str] = None
 
     def admin_login(self, password: str) -> bool:
         r = self.session.post(f"{self.base_url}/api/admin/login", json={"password": password})
-        return r.ok
+        if r.ok:
+            # 登录成功后重置CSRF缓存，确保重新拉取
+            self._csrf_token = None
+            return True
+        return False
 
     def admin_me(self) -> Optional[dict]:
         try:
@@ -31,8 +36,34 @@ class BackendClient:
         except Exception:
             return False
 
+    def get_csrf_token(self, force: bool = False) -> str:
+        if not force and self._csrf_token:
+            return self._csrf_token
+
+        r = self.session.get(f"{self.base_url}/api/admin/csrf-token", timeout=10)
+        if not r.ok:
+            try:
+                detail = r.json().get('detail')
+            except Exception:
+                detail = r.text
+            raise RuntimeError(f"无法获取CSRF token: {detail}")
+
+        data = r.json()
+        token = data.get('csrf_token')
+        if not token:
+            raise RuntimeError("后端未返回CSRF token")
+
+        self._csrf_token = token
+        return token
+
     def import_cookie(self, cookie: str) -> requests.Response:
-        return self.session.post(f"{self.base_url}/api/admin/import-cookie", json={"cookie": cookie})
+        token = self.get_csrf_token()
+        headers = {'X-CSRF-Token': token}
+        return self.session.post(
+            f"{self.base_url}/api/admin/import-cookie",
+            json={"cookie": cookie},
+            headers=headers,
+        )
 
     def save_mother(self, name: str, access_token: str, token_expires_at: Optional[str], teams: list[dict], notes: Optional[str] = None) -> requests.Response:
         payload = {
@@ -42,7 +73,9 @@ class BackendClient:
             "teams": teams,
             "notes": notes,
         }
-        return self.session.post(f"{self.base_url}/api/admin/mothers", json=payload)
+        token = self.get_csrf_token()
+        headers = {'X-CSRF-Token': token}
+        return self.session.post(f"{self.base_url}/api/admin/mothers", json=payload, headers=headers)
 
 
 def fetch_session_in_page(page) -> dict:
@@ -364,7 +397,16 @@ def run_gui():
                         window['-STATUS-'].update('管理员登录失败。')
                         continue
                     url = f"{base.rstrip('/')}/api/admin/mothers/batch/import-text"
-                    r = client.session.post(url, data='\n'.join(lines).encode('utf-8'), headers={'Content-Type': 'text/plain; charset=utf-8'})
+                    try:
+                        csrf_token = client.get_csrf_token()
+                    except Exception as e:
+                        window['-STATUS-'].update(f'获取CSRF失败: {e}')
+                        continue
+                    headers = {
+                        'Content-Type': 'text/plain; charset=utf-8',
+                        'X-CSRF-Token': csrf_token,
+                    }
+                    r = client.session.post(url, data='\n'.join(lines).encode('utf-8'), headers=headers)
                     if not r.ok:
                         try:
                             detail = r.json().get('detail')

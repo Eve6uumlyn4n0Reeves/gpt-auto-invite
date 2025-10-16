@@ -1,6 +1,7 @@
 import threading
 import time
 from collections import defaultdict
+from typing import Optional
 
 class ProviderMetrics:
     def __init__(self):
@@ -9,7 +10,7 @@ class ProviderMetrics:
         self._counts = defaultdict(int)
         self._latency = defaultdict(float)
     
-    def record(self, endpoint: str, team_id: str | None, status: int, latency_ms: float):
+    def record(self, endpoint: str, team_id: Optional[str], status: int, latency_ms: float):
         key = (endpoint, team_id or "-", status)
         with self._lock:
             self._counts[key] += 1

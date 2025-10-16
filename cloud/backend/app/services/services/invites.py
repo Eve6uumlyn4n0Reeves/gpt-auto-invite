@@ -1,14 +1,23 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import update, select
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
-from app import models
+from typing import Optional, Sequence, Set
+
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from app import models, provider
 from app.security import decrypt_token
-from app import provider
-import time
 
 HELD_TTL_SECONDS = 30
 RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+@dataclass
+class TargetSelection:
+    mother: models.MotherAccount
+    team: models.MotherTeam
+    seat_id: int
 
 
 def _clear_seat(seat: models.SeatAllocation) -> None:
@@ -18,6 +27,7 @@ def _clear_seat(seat: models.SeatAllocation) -> None:
     seat.email = None
     seat.invite_request_id = None
     seat.invite_id = None
+    seat.member_id = None
 
 
 def _release_seat_by_team_email(db: Session, team_id: str, email: str) -> bool:
@@ -33,57 +43,158 @@ def _release_seat_by_team_email(db: Session, team_id: str, email: str) -> bool:
     return True
 
 
+def _find_member_id_by_email(payload: object, email: str) -> Optional[str]:
+    """在成员列表响应中，根据邮箱查找成员ID。"""
+    if not payload:
+        return None
+
+    target = email.lower()
+    stack: list[object] = [payload]
+    seen: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+
+            candidate_email = current.get("email") or current.get("email_address")
+            if not candidate_email:
+                user_info = current.get("user") or current.get("member") or current.get("account")
+                if isinstance(user_info, dict):
+                    candidate_email = user_info.get("email") or user_info.get("email_address")
+
+            if isinstance(candidate_email, str) and candidate_email.lower() == target:
+                for key in ("id", "member_id", "user_id", "account_user_id"):
+                    member_id = current.get(key)
+                    if member_id:
+                        return str(member_id)
+
+            for value in current.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(current, list):
+            for item in current:
+                if isinstance(item, (dict, list)):
+                    stack.append(item)
+
+    return None
+
+
 class InviteService:
     def __init__(self, db: Session):
         self.db = db
 
     def _choose_target(
         self, email: str, exclude_mother_ids: Optional[set[int]] = None
-    ) -> Optional[tuple[models.MotherAccount, models.MotherTeam]]:
+    ) -> Optional[TargetSelection]:
         """
         选择目标母号与团队：
         - 优先填满单个母号再切换（按母号创建时间由早到晚遍历）
         - 仅考虑活跃母号，且需存在可用团队与空位
         - 同一邮箱允许加入多个 team，但同一 team 内不能重复
+        - 按批次流式遍历母号，逐个查询空座与可用团队，避免一次性加载全部数据
         """
-        mothers = (
+        exclude_ids = exclude_mother_ids or set()
+
+        mothers_query = (
             self.db.query(models.MotherAccount)
             .filter(models.MotherAccount.status == models.MotherStatus.active)
             .order_by(models.MotherAccount.created_at.asc())
+        )
+        if exclude_ids:
+            mothers_query = mothers_query.filter(~models.MotherAccount.id.in_(exclude_ids))  # type: ignore[arg-type]
+
+        batch_size = 50
+        mothers_iter = mothers_query.yield_per(batch_size)
+        batch: list[models.MotherAccount] = []
+
+        for mother in mothers_iter:
+            batch.append(mother)
+            if len(batch) >= batch_size:
+                selection = self._choose_from_batch(batch, email)
+                if selection:
+                    return selection
+                batch.clear()
+
+        if batch:
+            return self._choose_from_batch(batch, email)
+
+        return None
+
+    def _choose_from_batch(
+        self, mothers: Sequence[models.MotherAccount], email: str
+    ) -> Optional[TargetSelection]:
+        """在一批母号中选择目标，减少 N+1 查询。"""
+        if not mothers:
+            return None
+
+        mother_ids = [mother.id for mother in mothers]
+
+        seats = (
+            self.db.query(models.SeatAllocation)
+            .filter(
+                models.SeatAllocation.mother_id.in_(mother_ids),
+                models.SeatAllocation.status == models.SeatStatus.free,
+            )
+            .order_by(models.SeatAllocation.mother_id.asc(), models.SeatAllocation.slot_index.asc())
             .all()
         )
+        seat_map: dict[int, models.SeatAllocation] = {}
+        for seat in seats:
+            seat_map.setdefault(seat.mother_id, seat)
+
+        teams = (
+            self.db.query(models.MotherTeam)
+            .filter(
+                models.MotherTeam.mother_id.in_(mother_ids),
+                models.MotherTeam.is_enabled == True,  # noqa: E712
+            )
+            .order_by(
+                models.MotherTeam.mother_id.asc(),
+                models.MotherTeam.is_default.desc(),
+                models.MotherTeam.id.asc(),
+            )
+            .all()
+        )
+        teams_map: dict[int, list[models.MotherTeam]] = defaultdict(list)
+        team_ids: list[str] = []
+        for team in teams:
+            teams_map[team.mother_id].append(team)
+            if team.team_id:
+                team_ids.append(team.team_id)
+
+        existing_for_email: Set[str] = set()
+        if team_ids:
+            rows = (
+                self.db.query(models.SeatAllocation.team_id)
+                .filter(
+                    models.SeatAllocation.team_id.in_(team_ids),
+                    models.SeatAllocation.email == email,
+                )
+                .all()
+            )
+            existing_for_email = {team_id for team_id, in rows if team_id}
 
         for mother in mothers:
-            if exclude_mother_ids and mother.id in exclude_mother_ids:
+            seat = seat_map.get(mother.id)
+            if not seat:
+                continue
+            teams_for_mother = teams_map.get(mother.id)
+            if not teams_for_mother:
                 continue
 
-            # 必须有空位
-            has_free = (
-                self.db.query(models.SeatAllocation)
-                .filter(
-                    models.SeatAllocation.mother_id == mother.id,
-                    models.SeatAllocation.status == models.SeatStatus.free,
-                )
-                .first()
-            ) is not None
-            if not has_free:
-                continue
-
-            # 从已启用的团队里选择一个该邮箱尚未存在的团队，默认团队优先
-            teams_enabled = [t for t in mother.teams if t.is_enabled]
-            teams_available = [
-                t
-                for t in teams_enabled
-                if not self.db.query(models.SeatAllocation)
-                .filter(models.SeatAllocation.team_id == t.team_id, models.SeatAllocation.email == email)
-                .first()
+            available = [
+                t for t in teams_for_mother if t.team_id and t.team_id not in existing_for_email
             ]
-
-            if not teams_available:
+            if not available:
                 continue
 
-            default = next((t for t in teams_available if t.is_default), None)
-            return mother, (default or teams_available[0])
+            default_team = next((t for t in available if t.is_default), None)
+            chosen_team = default_team or available[0]
+            return TargetSelection(mother=mother, team=chosen_team, seat_id=seat.id)
 
         return None
 
@@ -98,7 +209,8 @@ class InviteService:
             if not choice:
                 return False, "暂无可用座位（所有母号已满或团队不可用）", None, None, None
 
-            mother, team = choice
+            mother = choice.mother
+            team = choice.team
             tried_mothers.add(mother.id)
 
             # 若 token 已过期，则标记为不可用并尝试下一个母号
@@ -141,6 +253,7 @@ class InviteService:
                 candidate = self.db.execute(
                     select(models.SeatAllocation)
                     .where(
+                        models.SeatAllocation.id == choice.seat_id,
                         models.SeatAllocation.mother_id == mother.id,
                         models.SeatAllocation.status == models.SeatStatus.free,
                     )
@@ -159,15 +272,7 @@ class InviteService:
                 claim_attempts = 3
                 while claim_attempts > 0 and seat is None:
                     claim_attempts -= 1
-                    candidate = (
-                        self.db.query(models.SeatAllocation)
-                        .filter(
-                            models.SeatAllocation.mother_id == mother.id,
-                            models.SeatAllocation.status == models.SeatStatus.free,
-                        )
-                        .order_by(models.SeatAllocation.slot_index.asc())
-                        .first()
-                    )
+                    candidate = self.db.get(models.SeatAllocation, choice.seat_id)
                     if not candidate:
                         break
 
@@ -244,7 +349,6 @@ class InviteService:
                     self.db.add(inv)
                     self.db.add(seat)
                     self.db.commit()
-                    time.sleep(1)
                     continue
             except Exception as e:
                 inv.status = models.InviteStatus.failed
@@ -383,7 +487,7 @@ def remove_member(db: Session, email: str, team_id: str) -> tuple[bool, str]:
         .first()
     )
 
-    if not seat or not seat.member_id:
+    if not seat:
         return False, "操作失败，请稍后重试"
 
     mother = db.get(models.MotherAccount, seat.mother_id)
@@ -391,9 +495,29 @@ def remove_member(db: Session, email: str, team_id: str) -> tuple[bool, str]:
         return False, "操作失败，请稍后重试"
 
     access_token = decrypt_token(mother.access_token_enc)
+    member_id = seat.member_id
+
+    if not member_id:
+        try:
+            members_payload = provider.list_members(access_token, team_id)
+            member_id = _find_member_id_by_email(members_payload, email)
+        except provider.ProviderError as e:
+            if e.status in (401, 403):
+                try:
+                    mother.status = models.MotherStatus.invalid
+                    db.add(mother)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            return False, "操作失败，请稍后重试"
+        except Exception:
+            return False, "操作失败，请稍后重试"
+
+        if not member_id:
+            return False, "操作失败，请稍后重试"
 
     try:
-        provider.delete_member(access_token, team_id, seat.member_id)
+        provider.delete_member(access_token, team_id, member_id)
 
         _clear_seat(seat)
         db.add(seat)

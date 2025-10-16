@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from typing import Generator
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from app.config import settings
 
 engine = create_engine(
@@ -14,3 +15,11 @@ Base = declarative_base()
 def init_db():
     from app import models  # noqa: F401 ensure model metadata registered
     Base.metadata.create_all(bind=engine)
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
