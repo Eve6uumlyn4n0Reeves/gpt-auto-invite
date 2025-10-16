@@ -7,12 +7,35 @@ import PySimpleGUI as sg
 import requests
 from playwright.sync_api import sync_playwright
 
+import os
+import hmac
+import hashlib
+import time as _time
+
+CONFIG_PATH = os.path.expanduser("~/.gpt_invite_gui.json")
+
+def load_prefs() -> dict:
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_prefs(prefs: dict) -> None:
+    try:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(prefs, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 class BackendClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self._csrf_token: Optional[str] = None
+        self._ingest_key: Optional[str] = None
 
     def admin_login(self, password: str) -> bool:
         r = self.session.post(f"{self.base_url}/api/admin/login", json={"password": password})
@@ -77,6 +100,31 @@ class BackendClient:
         headers = {'X-CSRF-Token': token}
         return self.session.post(f"{self.base_url}/api/admin/mothers", json=payload, headers=headers)
 
+    # Ingest API support (HMAC 签名)
+    def set_ingest_key(self, key: Optional[str]):
+        self._ingest_key = key
+
+    def _ingest_sign(self, method: str, path: str, ts: str, body: bytes) -> str:
+        key = (self._ingest_key or '').encode('utf-8')
+        body_hash = hashlib.sha256(body or b"{}").hexdigest()
+        msg = f"{method}\n{path}\n{ts}\n{body_hash}".encode('utf-8')
+        return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+    def ingest_mother(self, payload: dict) -> requests.Response:
+        if not self._ingest_key:
+            raise RuntimeError('INGEST_API_KEY 未设置')
+        path = '/api/ingest/mothers'
+        url = f"{self.base_url}{path}"
+        raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        ts = str(int(_time.time()))
+        sign = self._ingest_sign('POST', path, ts, raw)
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Ingest-Ts': ts,
+            'X-Ingest-Sign': sign,
+        }
+        return self.session.post(url, data=raw, headers=headers, timeout=30)
+
 
 def fetch_session_in_page(page) -> dict:
     # Execute in page context; ensure credentials include cookies
@@ -94,9 +142,18 @@ def fetch_session_in_page(page) -> dict:
 def run_gui():
     sg.theme('SystemDefaultForReal')
 
+    prefs = load_prefs()
+    default_base_url = prefs.get('base_url', 'http://localhost:8000')
+    default_front_url = prefs.get('front_url', 'http://localhost:3000')
+
     layout = [
-        [sg.Text('后端地址', size=(10,1)), sg.Input('http://localhost:8000', key='-BASE-URL-', size=(40,1)), sg.Button('检查后端', key='-CHECK-HEALTH-')],
-        [sg.Text('云端地址', size=(10,1)), sg.Input('http://localhost:3000', key='-FRONT-URL-', size=(40,1)), sg.Button('打开云端后台', key='-OPEN-FRONT-')],
+        [sg.Text('后端地址', size=(10,1)), sg.Input(default_base_url, key='-BASE-URL-', size=(40,1)), sg.Button('检查后端', key='-CHECK-HEALTH-')],
+        [sg.Text('云端地址', size=(10,1)), sg.Input(default_front_url, key='-FRONT-URL-', size=(40,1)), sg.Button('打开云端后台', key='-OPEN-FRONT-')],
+        [sg.Frame('远程录入（可选 Ingest API）', [
+            [sg.Checkbox('使用 Ingest API（无需管理员登录）', key='-USE-INGEST-', default=bool(load_prefs().get('use_ingest', False)))],
+            [sg.Text('Ingest 密钥', size=(10,1)), sg.Input(load_prefs().get('ingest_key', ''), key='-INGEST-KEY-', size=(40,1))],
+            [sg.Text('提示：需在云端启用 INGEST_API_ENABLED=true 并配置 INGEST_API_KEY')]
+        ])],
         [sg.Frame('母号信息', [
             [sg.Text('母号名称', size=(14,1)), sg.Input(key='-MOTHER-NAME-', size=(40,1))],
             [sg.Text('团队ID（逗号或换行）', size=(14,1)), sg.Multiline(key='-TEAMS-', size=(40,3)), sg.Text('默认取第一项')],
@@ -150,9 +207,33 @@ def run_gui():
             if event in (sg.WINDOW_CLOSED, '退出'):
                 break
 
+            if event == '-BASE-URL-':
+                try:
+                    prefs['base_url'] = values['-BASE-URL-'].strip()
+                    save_prefs(prefs)
+                except Exception:
+                    pass
+
+            if event == '-FRONT-URL-':
+                try:
+                    prefs['front_url'] = values['-FRONT-URL-'].strip()
+                    save_prefs(prefs)
+                except Exception:
+                    pass
+
+            if event == '-INGEST-KEY-':
+                prefs['ingest_key'] = values['-INGEST-KEY-']
+                save_prefs(prefs)
+
+            if event == '-USE-INGEST-':
+                prefs['use_ingest'] = bool(values['-USE-INGEST-'])
+                save_prefs(prefs)
+
             if event == '检查后端' or event == '-CHECK-HEALTH-':
                 try:
                     base = values['-BASE-URL-'].strip()
+                    prefs['base_url'] = base
+                    save_prefs(prefs)
                     client = BackendClient(base)
                     ok = client.health()
                     window['-STATUS-'].update('后端正常' if ok else '后端不可用')
@@ -163,6 +244,8 @@ def run_gui():
                 try:
                     import webbrowser
                     front = values['-FRONT-URL-'].strip()
+                    prefs['front_url'] = front
+                    save_prefs(prefs)
                     url = front.rstrip('/') + '/admin'
                     webbrowser.open(url)
                     window['-STATUS-'].update(f'已打开：{url}')
@@ -240,6 +323,8 @@ def run_gui():
             if event == '发送到后端':
                 try:
                     base = values['-BASE-URL-'].strip()
+                    prefs['base_url'] = base
+                    save_prefs(prefs)
                     name = values['-MOTHER-NAME-'].strip()
                     notes = values['-NOTES-'].strip() or None
                     teams_txt = values['-TEAMS-']
@@ -272,16 +357,37 @@ def run_gui():
                                 'is_enabled': True,
                                 'is_default': i == 0,
                             })
-                    pwd = sg.popup_get_text('管理员密码', password_char='*')
-                    if not pwd:
-                        window['-STATUS-'].update('已取消。')
-                        continue
+                    use_ingest = bool(values.get('-USE-INGEST-'))
+                    ingest_key = values.get('-INGEST-KEY-', '').strip()
                     window['-STATUS-'].update('正在发送到后端 ...')
 
-                    def _worker_send(base_url, password, name, access_token, token_expires_at, teams, notes):
+                    def _worker_send(base_url, name, access_token, token_expires_at, teams, notes, use_ingest, ingest_key):
                         try:
                             client = BackendClient(base_url)
-                            if not client.admin_login(password):
+                            if use_ingest and ingest_key:
+                                client.set_ingest_key(ingest_key)
+                                payload = {
+                                    'name': name,
+                                    'access_token': access_token,
+                                    'token_expires_at': token_expires_at,
+                                    'teams': teams,
+                                    'notes': notes,
+                                }
+                                r = client.ingest_mother(payload)
+                                try:
+                                    payload = r.json()
+                                except Exception:
+                                    payload = r.text
+                                if r.ok:
+                                    window.write_event_value('-SEND-DONE-', {'ok': True, 'status': r.status_code, 'payload': payload, 'mode': 'ingest'})
+                                    return
+                                # 回退到 Admin 登录
+                            # Admin 模式
+                            pwd = sg.popup_get_text('管理员密码', password_char='*')
+                            if not pwd:
+                                window.write_event_value('-SEND-DONE-', {'ok': False, 'error': '已取消'})
+                                return
+                            if not client.admin_login(pwd):
                                 window.write_event_value('-SEND-DONE-', {'ok': False, 'error': '管理员登录失败'})
                                 return
                             r = client.save_mother(name=name, access_token=access_token, token_expires_at=token_expires_at, teams=teams, notes=notes)
@@ -289,11 +395,11 @@ def run_gui():
                                 payload = r.json()
                             except Exception:
                                 payload = r.text
-                            window.write_event_value('-SEND-DONE-', {'ok': r.ok, 'status': r.status_code, 'payload': payload})
+                            window.write_event_value('-SEND-DONE-', {'ok': r.ok, 'status': r.status_code, 'payload': payload, 'mode': 'admin'})
                         except Exception as e:
                             window.write_event_value('-SEND-DONE-', {'ok': False, 'error': str(e)})
 
-                    threading.Thread(target=_worker_send, args=(base, pwd, name, access_token, token_expires_at, teams, notes), daemon=True).start()
+                    threading.Thread(target=_worker_send, args=(base, name, access_token, token_expires_at, teams, notes, use_ingest, ingest_key), daemon=True).start()
                 except Exception as e:
                     window['-STATUS-'].update(f'发送失败: {e}')
 
@@ -388,35 +494,67 @@ def run_gui():
                         window['-STATUS-'].update('没有可上传的有效条目（缺少邮箱或Token）。')
                         continue
                     base = values['-BASE-URL-'].strip()
-                    pwd = sg.popup_get_text('管理员密码', password_char='*')
-                    if not pwd:
-                        window['-STATUS-'].update('已取消。')
-                        continue
+                    prefs['base_url'] = base
+                    save_prefs(prefs)
+                    use_ingest = bool(values.get('-USE-INGEST-'))
+                    ingest_key = values.get('-INGEST-KEY-', '').strip()
                     client = BackendClient(base)
-                    if not client.admin_login(pwd):
-                        window['-STATUS-'].update('管理员登录失败。')
-                        continue
-                    url = f"{base.rstrip('/')}/api/admin/mothers/batch/import-text"
-                    try:
-                        csrf_token = client.get_csrf_token()
-                    except Exception as e:
-                        window['-STATUS-'].update(f'获取CSRF失败: {e}')
-                        continue
-                    headers = {
-                        'Content-Type': 'text/plain; charset=utf-8',
-                        'X-CSRF-Token': csrf_token,
-                    }
-                    r = client.session.post(url, data='\n'.join(lines).encode('utf-8'), headers=headers)
-                    if not r.ok:
+                    if use_ingest and ingest_key:
+                        client.set_ingest_key(ingest_key)
+                        # 将批量条目逐条通过 Ingest 提交
+                        success = 0
+                        total = 0
+                        for item in batch_entries:
+                            name = item.get('name') or item.get('email') or ''
+                            token = item.get('access_token')
+                            if not name or not token:
+                                continue
+                            teams = item.get('teams') or []
+                            payload = {
+                                'name': name,
+                                'access_token': token,
+                                'token_expires_at': item.get('token_expires_at'),
+                                'teams': teams,
+                                'notes': item.get('notes'),
+                            }
+                            try:
+                                r = client.ingest_mother(payload)
+                                total += 1
+                                if r.ok:
+                                    success += 1
+                            except Exception:
+                                total += 1
+                        window['-STATUS-'].update(f'Ingest 完成：成功 {success} / {total}（跳过 {skipped}）')
+                    else:
+                        # 回退为管理员批量文本导入
+                        pwd = sg.popup_get_text('管理员密码', password_char='*')
+                        if not pwd:
+                            window['-STATUS-'].update('已取消。')
+                            continue
+                        if not client.admin_login(pwd):
+                            window['-STATUS-'].update('管理员登录失败。')
+                            continue
+                        url = f"{base.rstrip('/')}/api/admin/mothers/batch/import-text"
                         try:
-                            detail = r.json().get('detail')
-                        except Exception:
-                            detail = r.text
-                        window['-STATUS-'].update(f'上传失败：{detail}')
-                        continue
-                    res = r.json()
-                    ok_count = len([x for x in res if x.get('success')])
-                    window['-STATUS-'].update(f'上传完成：成功 {ok_count} / {len(res)}（跳过 {skipped}）')
+                            csrf_token = client.get_csrf_token()
+                        except Exception as e:
+                            window['-STATUS-'].update(f'获取CSRF失败: {e}')
+                            continue
+                        headers = {
+                            'Content-Type': 'text/plain; charset=utf-8',
+                            'X-CSRF-Token': csrf_token,
+                        }
+                        r = client.session.post(url, data='\n'.join(lines).encode('utf-8'), headers=headers)
+                        if not r.ok:
+                            try:
+                                detail = r.json().get('detail')
+                            except Exception:
+                                detail = r.text
+                            window['-STATUS-'].update(f'上传失败：{detail}')
+                            continue
+                        res = r.json()
+                        ok_count = len([x for x in res if x.get('success')])
+                        window['-STATUS-'].update(f'上传完成：成功 {ok_count} / {len(res)}（跳过 {skipped}）')
                 except Exception as e:
                     window['-STATUS-'].update(f'上传失败: {e}')
 

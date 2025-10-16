@@ -206,3 +206,41 @@ class BulkOperationLog(Base):
     __table_args__ = (
         Index("ix_bulk_operation_created_at", "created_at"),
     )
+
+class BatchJobStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+class BatchJobType(str, enum.Enum):
+    users_resend = "users_resend"
+    users_cancel = "users_cancel"
+    users_remove = "users_remove"
+    codes_disable = "codes_disable"
+
+class BatchJob(Base):
+    __tablename__ = "batch_jobs"
+
+    id = Column(Integer, primary_key=True)
+    job_type = Column(Enum(BatchJobType), nullable=False)
+    status = Column(Enum(BatchJobStatus), default=BatchJobStatus.pending, nullable=False)
+    actor = Column(String(64), nullable=True)
+    payload_json = Column(Text, nullable=True)
+    total_count = Column(Integer, nullable=True)
+    success_count = Column(Integer, nullable=True)
+    failed_count = Column(Integer, nullable=True)
+    last_error = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=3, nullable=False)
+    visible_until = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_batch_job_status", "status"),
+        Index("ix_batch_job_created_at", "created_at"),
+    )

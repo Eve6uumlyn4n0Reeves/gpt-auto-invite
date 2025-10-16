@@ -7,9 +7,9 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import models, provider
+from app.config import settings
 from app.security import decrypt_token
 
-HELD_TTL_SECONDS = 30
 RETRY_STATUS = (429, 500, 502, 503, 504)
 
 
@@ -247,7 +247,7 @@ class InviteService:
             seat = None
             dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
             is_pg = bool(dialect and getattr(dialect, "name", "").startswith("postgres"))
-            held_until = datetime.utcnow() + timedelta(seconds=HELD_TTL_SECONDS)
+            held_until = datetime.utcnow() + timedelta(seconds=settings.seat_hold_ttl_seconds)
 
             if is_pg:
                 candidate = self.db.execute(

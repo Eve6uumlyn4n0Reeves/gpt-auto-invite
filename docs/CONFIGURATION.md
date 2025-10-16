@@ -28,11 +28,23 @@
 - 策略与安全
   - `ADMIN_SESSION_TTL_SECONDS` 管理会话 TTL（秒），默认 7 天
   - `TOKEN_DEFAULT_TTL_DAYS` Token 回退有效天数（默认 40）
+  - `SEAT_HOLD_TTL_SECONDS` 座位占位（held）时长，默认 30 秒
+  - `MAINTENANCE_INTERVAL_SECONDS` 维护循环执行间隔（默认 60 秒）
+  - `INVITE_SYNC_DAYS` 邀请接受回填扫描的时间窗口（默认 30 天）
+- `INVITE_SYNC_GROUP_LIMIT` 回填时每轮处理的（mother_id, team_id）组上限（默认 20）
+  - `JOB_VISIBILITY_TIMEOUT_SECONDS` 异步任务可见性超时（默认 300 秒），超时未完成将重新入队
+  - `JOB_MAX_ATTEMPTS` 异步任务最大尝试次数（默认 3 次）
   - `MAX_LOGIN_ATTEMPTS`、`LOGIN_LOCKOUT_DURATION` 登录防爆破
   - `HTTP_PROXY`、`HTTPS_PROXY`（可选）
 - 前端-后端连通（Next.js 服务器端环境）
   - `BACKEND_URL` 例如开发 `http://localhost:8000`，容器 `http://backend:8000`
   - `NODE_ENV` `development`/`production`
+ - 远程录号 Ingest API（可选，面向 GUI/服务端程序）
+   - `INGEST_API_ENABLED` `true/false` 是否启用，默认 `false`
+   - `INGEST_API_KEY` HMAC 密钥，用于请求签名（必须强随机）。签名头：
+     - `X-Ingest-Ts`: Unix 时间戳秒
+     - `X-Ingest-Sign`: `hex(hmac_sha256(key, method + "\n" + path + "\n" + ts + "\n" + sha256hex(body)))`
+   - 结合限流键 `ingest:by_ip`
 
 说明：当前后端未使用 JWT；部署文档中如出现 `JWT_*`、`ALLOWED_ORIGINS`、文件上传相关变量，属于旧文档遗留，不必配置。
 
@@ -124,4 +136,3 @@ PY
 - 生产 Compose 模板：`cloud/docker-compose.prod.yml`
 - 开发指南：`cloud/DEVELOPMENT.md`
 - 快速指引：项目根 `README.md`
-

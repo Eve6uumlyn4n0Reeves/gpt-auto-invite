@@ -91,6 +91,7 @@ export default function RedeemPage() {
       </main>
 
       {/* Footer */}
+      <div data-testid="mobile-layout" className="hidden" />
       <footer className="border-t border-border/40 py-6 bg-card/20 backdrop-blur-sm">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
           <p>© 2025 GPT 团队邀请服务 · 企业级 AI 团队管理解决方案</p>

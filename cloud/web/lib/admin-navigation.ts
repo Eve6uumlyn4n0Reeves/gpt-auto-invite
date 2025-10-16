@@ -8,6 +8,7 @@ export type AdminTab =
   | "overview"
   | "audit"
   | "settings"
+  | "jobs"
 
 export const ADMIN_TAB_ROUTES: Record<AdminTab, string> = {
   mothers: "/admin/mothers",
@@ -19,4 +20,5 @@ export const ADMIN_TAB_ROUTES: Record<AdminTab, string> = {
   overview: "/admin/overview",
   audit: "/admin/audit",
   settings: "/admin/settings",
+  jobs: "/admin/jobs",
 }

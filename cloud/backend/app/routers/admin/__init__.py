@@ -15,6 +15,7 @@ from . import (
     performance,
     quota,
     bulk_history,
+    jobs,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -30,5 +31,6 @@ router.include_router(audit.router)
 router.include_router(performance.router)
 router.include_router(quota.router)
 router.include_router(bulk_history.router)
+router.include_router(jobs.router)
 
 __all__ = ["router"]

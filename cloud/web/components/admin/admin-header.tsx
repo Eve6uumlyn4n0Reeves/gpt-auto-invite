@@ -54,6 +54,7 @@ export const AdminHeader: React.FC = () => {
     { href: ADMIN_TAB_ROUTES['codes-status'], label: '码状态' },
     { href: ADMIN_TAB_ROUTES['bulk-import'], label: '批量导入' },
     { href: ADMIN_TAB_ROUTES['bulk-history'], label: '批量历史' },
+    { href: ADMIN_TAB_ROUTES.jobs, label: '任务' },
     { href: ADMIN_TAB_ROUTES.audit, label: '审计日志' },
     { href: ADMIN_TAB_ROUTES.settings, label: '设置' },
   ]

@@ -137,6 +137,13 @@ async def setup_rate_limit_configs():
             expire_seconds=300,
             name="admin_ip"
         ),
+        # 远程录号：每分钟60次（按IP）
+        "ingest:by_ip": RateLimitConfig(
+            capacity=60,
+            refill_rate=60.0 / 60.0,  # 每分钟60次
+            expire_seconds=120,
+            name="ingest_ip"
+        ),
     }
 
     for config_id, config in configs.items():

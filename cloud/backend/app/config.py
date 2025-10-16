@@ -20,6 +20,8 @@ class Settings:
     admin_session_ttl_seconds: int = int(os.getenv("ADMIN_SESSION_TTL_SECONDS", str(7 * 24 * 3600)))
     # 默认母号 token 过期逻辑：若上游未提供 expires，则按该天数回退
     token_default_ttl_days: int = int(os.getenv("TOKEN_DEFAULT_TTL_DAYS", "40"))
+    # 座位占位 TTL（秒），邀请发送前的持有时间，避免并发抢占
+    seat_hold_ttl_seconds: int = int(os.getenv("SEAT_HOLD_TTL_SECONDS", "30"))
 
     extra_password: Optional[str] = os.getenv("EXTRA_PASSWORD")
     extra_password_start_at_raw: Optional[str] = os.getenv("EXTRA_PASSWORD_START_AT")
@@ -42,6 +44,16 @@ class Settings:
     rate_limit_enabled: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
     rate_limit_namespace: str = os.getenv("RATE_LIMIT_NAMESPACE", "gpt_invite:rate")
     csrf_allowed_origins_raw: Optional[str] = os.getenv("CSRF_ALLOWED_ORIGINS")
+    # 远程录号 Ingest API
+    ingest_api_enabled: bool = os.getenv("INGEST_API_ENABLED", "false").lower() == "true"
+    ingest_api_key: Optional[str] = os.getenv("INGEST_API_KEY")
+    # 维护与同步
+    maintenance_interval_seconds: int = int(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "60"))
+    invite_sync_days: int = int(os.getenv("INVITE_SYNC_DAYS", "30"))
+    invite_sync_group_limit: int = int(os.getenv("INVITE_SYNC_GROUP_LIMIT", "20"))
+    # 批量任务队列
+    job_visibility_timeout_seconds: int = int(os.getenv("JOB_VISIBILITY_TIMEOUT_SECONDS", "300"))
+    job_max_attempts: int = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
 
     @property
     def encryption_key(self) -> bytes:

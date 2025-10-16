@@ -27,6 +27,7 @@ export const RedeemFormEnhanced: React.FC = () => {
   const [resending, setResending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [focusedField, setFocusedField] = useState<'code' | 'email' | null>(null)
+  const [showErrors, setShowErrors] = useState(false)
 
   const validateForm = useCallback(() => {
     const errors = []
@@ -50,6 +51,7 @@ export const RedeemFormEnhanced: React.FC = () => {
     e.preventDefault()
     const errors = validateForm()
     if (errors.length > 0) {
+      setShowErrors(true)
       setError(errors.join(', '))
       return
     }
@@ -161,6 +163,7 @@ export const RedeemFormEnhanced: React.FC = () => {
                   disabled={submitting}
                   required
                   maxLength={32}
+                  data-testid="code-input"
                   className={`pr-10 transition-all duration-200 ${
                     focusedField === 'code'
                       ? 'ring-2 ring-primary/20 border-primary/50'
@@ -196,6 +199,7 @@ export const RedeemFormEnhanced: React.FC = () => {
                   onBlur={() => setFocusedField(null)}
                   disabled={submitting}
                   required
+                  data-testid="email-input"
                   className={`pr-10 transition-all duration-200 ${
                     focusedField === 'email'
                       ? 'ring-2 ring-primary/20 border-primary/50'
@@ -211,12 +215,15 @@ export const RedeemFormEnhanced: React.FC = () => {
                     }`}></div>
                   </div>
                 )}
+                {showErrors && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (
+                  <div data-testid="email-error" className="mt-1 text-xs text-red-600">请输入有效的邮箱地址</div>
+                )}
               </div>
             </div>
 
             {/* Error Alert */}
             {error && (
-              <Alert data-testid="redeem-error" className="border-red-500/50 bg-red-500/10 animate-fade-in">
+              <Alert data-testid="error-message" className="border-red-500/50 bg-red-500/10 animate-fade-in">
                 <AlertCircle className="w-4 h-4 text-red-600" />
                 <AlertDescription className="text-red-600 text-sm">
                   {error}
@@ -231,14 +238,19 @@ export const RedeemFormEnhanced: React.FC = () => {
               disabled={!isFormValid || submitting}
               loading={submitting}
               icon={<Zap className="w-4 h-4" />}
+              data-testid="redeem-button"
             >
-              {submitting ? '处理中...' : '立即兑换席位'}
+              {submitting ? '兑换中...' : '立即兑换席位'}
             </EnhancedButton>
+            {submitting && (
+              <div data-testid="loading-spinner" className="mx-auto mt-2 h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />)
+            }
           </form>
 
           {/* Result Alert */}
           {result && (
             <Alert
+              data-testid={result.success ? 'success-message' : 'error-message'}
               className={`mt-4 animate-fade-in ${
                 result.success
                   ? 'border-green-500/50 bg-green-500/10'

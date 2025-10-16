@@ -123,14 +123,18 @@ BACKEND_URL=http://localhost:8000
 # RATE_LIMIT_NAMESPACE=gpt_invite:rate
 ```
 
-### 5. 数据库初始化
+### 5. 数据库初始化（Alembic 迁移）
 
 ```bash
 # 在后端目录执行
 cd cloud/backend
 
-# 初始化数据库由应用自动创建表结构（无 Alembic）。
-# 首次启动后端即可。
+# 使用 Alembic 管理表结构，首次或变更后执行迁移：
+# 安装依赖后运行
+alembic upgrade head
+
+# 如模型有改动，需要生成迁移版本：
+# alembic revision --autogenerate -m "描述变更" && alembic upgrade head
 ```
 
 ### 6. 启动开发服务

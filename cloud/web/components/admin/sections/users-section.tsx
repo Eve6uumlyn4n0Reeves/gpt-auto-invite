@@ -21,6 +21,7 @@ interface UsersSectionProps {
   onBatchOperationChange: (value: string) => void
   onClearSelection: () => void
   onExecuteBatch: () => void
+  onExecuteBatchAsync: () => void
   onRowAction: (user: UserData) => void
   page: number
   pageSize: number
@@ -44,6 +45,7 @@ export function UsersSection({
   onBatchOperationChange,
   onClearSelection,
   onExecuteBatch,
+  onExecuteBatchAsync,
   onRowAction,
   page,
   pageSize,
@@ -107,6 +109,14 @@ export function UsersSection({
                   className="bg-primary hover:bg-primary/90"
                 >
                   {batchLoading ? "执行中..." : "执行操作"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onExecuteBatchAsync}
+                  disabled={!batchOperation || batchLoading}
+                >
+                  {batchLoading ? "提交中..." : "异步执行"}
                 </Button>
               </div>
             </div>

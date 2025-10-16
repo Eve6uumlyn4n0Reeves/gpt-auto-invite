@@ -17,6 +17,7 @@ export function UsersView() {
     clearSelection,
     supportedBatchActions,
     executeBatch,
+    executeBatchAsync,
     refreshUsers,
     handleUserRowAction,
     usersPage,
@@ -42,6 +43,7 @@ export function UsersView() {
       onBatchOperationChange={setBatchOperation}
       onClearSelection={clearSelection}
       onExecuteBatch={executeBatch}
+      onExecuteBatchAsync={executeBatchAsync}
       onRowAction={handleUserRowAction}
       page={usersPage}
       pageSize={usersPageSize}

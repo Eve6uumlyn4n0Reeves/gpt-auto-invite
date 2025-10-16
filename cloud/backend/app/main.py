@@ -12,6 +12,7 @@ from app.routers.admin import router as admin_router
 from app.routers.routers import stats as stats_router
 from app.routers.routers import metrics as metrics_router
 from app.routers.routers import rate_limit as rate_limit_router
+from app.routers.routers import ingest as ingest_router
 from app.config import settings
 from app.middleware import SecurityHeadersMiddleware, CSRFMiddleware, InputValidationMiddleware
 from app.services.services.maintenance import cleanup_stale_held, cleanup_expired_mother_teams
@@ -33,6 +34,20 @@ async def lifespan(_: FastAPI):
     def _run_maintenance_once():
         """执行一次维护循环（同步函数，供线程池调用）。"""
         db = SessionLocal()
+        # 使用 Redis 分布式锁避免多实例并发执行维护逻辑
+        lock_client = None
+        lock_token = None
+        try:
+            from app.utils.locks import try_acquire_lock, release_lock
+            lock_ttl = int(max(5, settings.maintenance_interval_seconds * 2))
+            lock_name = f"{settings.rate_limit_namespace}:maintenance_lock"
+            lock_client, lock_token = try_acquire_lock(lock_name, lock_ttl)
+            if lock_client is None and lock_token is None:
+                # 未获取到锁（被其他实例占用），直接返回
+                return
+        except Exception:
+            # 获取锁异常时，继续执行（单实例或无 Redis 场景）
+            pass
         try:
             freed = cleanup_stale_held(db)
             if freed:
@@ -41,7 +56,35 @@ async def lifespan(_: FastAPI):
             deleted = cleanup_expired_mother_teams(db)
             if deleted:
                 logging.info("cleanup_expired_mother_teams: deleted %s teams", deleted)
+            try:
+                from app.services.services.maintenance import sync_invite_acceptance
+                accepted = sync_invite_acceptance(db, days=settings.invite_sync_days, limit_groups=settings.invite_sync_group_limit)
+                if accepted:
+                    logging.info("sync_invite_acceptance: updated %s invites to accepted", accepted)
+            except Exception:
+                logging.exception("sync_invite_acceptance error")
+            # 处理异步批量任务
+            try:
+                from app.services.services.jobs import process_one_job
+                processed = 0
+                # 处理少量任务，避免阻塞
+                for _ in range(3):
+                    if process_one_job(db):
+                        processed += 1
+                    else:
+                        break
+                if processed:
+                    logging.info("batch jobs processed: %s", processed)
+            except Exception:
+                logging.exception("batch jobs processing error")
         finally:
+            # 释放锁
+            try:
+                if lock_client and lock_token:
+                    from app.utils.locks import release_lock
+                    release_lock(lock_client, f"{settings.rate_limit_namespace}:maintenance_lock", lock_token)
+            except Exception:
+                pass
             db.close()
 
     async def _maintenance_worker():
@@ -58,7 +101,7 @@ async def lifespan(_: FastAPI):
                 continue
 
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                await asyncio.wait_for(stop_event.wait(), timeout=float(settings.maintenance_interval_seconds))
             except asyncio.TimeoutError:
                 continue
 
@@ -87,6 +130,7 @@ app.add_middleware(InputValidationMiddleware)
 # 添加CSRF防护中间件，排除公开API路径
 app.add_middleware(CSRFMiddleware, excluded_paths=[
     "/api/public/",
+    "/api/ingest/",
     "/health",
     "/docs",
     "/openapi.json",
@@ -101,6 +145,7 @@ app.include_router(admin_router)
 app.include_router(stats_router.router)
 app.include_router(metrics_router.router)
 app.include_router(rate_limit_router.router)
+app.include_router(ingest_router.router)
 
 
 @app.get("/health")

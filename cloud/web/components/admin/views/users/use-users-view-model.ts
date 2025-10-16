@@ -28,6 +28,7 @@ interface UsersViewModel {
   clearSelection: () => void
   supportedBatchActions: string[]
   executeBatch: () => Promise<void>
+  executeBatchAsync: () => Promise<void>
   refreshUsers: () => void
   handleUserRowAction: (user: UserData) => Promise<void>
   usersPage: number
@@ -242,6 +243,50 @@ export const useUsersViewModel = (): UsersViewModel => {
     selectedUsers,
   ])
 
+  const handleBatchExecuteAsync = useCallback(async () => {
+    if (!batchOperation || selectedUsers.length === 0) {
+      return
+    }
+    setBatchLoading(true)
+    try {
+      const token = await ensureCsrfToken()
+      const response = await fetch('/api/admin/batch/users/async', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': token,
+          'X-Request-Source': 'nextjs-frontend',
+        },
+        body: JSON.stringify({
+          action: batchOperation,
+          ids: selectedUsers,
+          confirm: true,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.message || data?.detail || '异步批量提交失败')
+      }
+      notifications.addNotification({
+        type: 'success',
+        title: '任务已提交',
+        message: `任务 #${data?.job_id ?? ''} 已创建，系统将后台执行`,
+      })
+      setSelectedUsers([])
+      setBatchOperation('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '异步批量提交失败'
+      notifications.addNotification({
+        type: 'error',
+        title: '任务提交失败',
+        message,
+      })
+    } finally {
+      setBatchLoading(false)
+      resetCsrfToken()
+    }
+  }, [batchOperation, ensureCsrfToken, notifications, resetCsrfToken, selectedUsers])
+
   const handleUserRowAction = useCallback(
     async (user: UserData) => {
       const details = [
@@ -324,6 +369,7 @@ export const useUsersViewModel = (): UsersViewModel => {
     clearSelection: () => setSelectedUsers([]),
     supportedBatchActions: batchActions.users,
     executeBatch: handleBatchExecute,
+    executeBatchAsync: handleBatchExecuteAsync,
     refreshUsers,
     handleUserRowAction,
     usersPage: state.usersPage,
