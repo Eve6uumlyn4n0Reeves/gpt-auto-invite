@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Settings:
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+    # 原始数据库URL（如果未提供，则使用绝对路径SQLite默认值）
+    database_url_raw: str = os.getenv("DATABASE_URL", "")
     encryption_key_b64: str = os.getenv("ENCRYPTION_KEY", "")
     admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "admin")
     http_proxy: Optional[str] = os.getenv("HTTP_PROXY")
@@ -54,6 +55,20 @@ class Settings:
     # 批量任务队列
     job_visibility_timeout_seconds: int = int(os.getenv("JOB_VISIBILITY_TIMEOUT_SECONDS", "300"))
     job_max_attempts: int = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+
+    @property
+    def database_url(self) -> str:
+        """获取数据库连接URL。
+        优先使用 DATABASE_URL；否则回退到基于后端目录的绝对路径 SQLite（cloud/backend/data/app.db）。
+        """
+        if self.database_url_raw:
+            return self.database_url_raw
+
+        # 计算 cloud/backend 目录
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        default_db_path = os.path.join(base_dir, "data", "app.db")
+        # 绝对路径SQLite：sqlite:////absolute/path
+        return f"sqlite:///{default_db_path if default_db_path.startswith('/') else '/' + default_db_path}"
 
     @property
     def encryption_key(self) -> bytes:

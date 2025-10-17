@@ -101,9 +101,9 @@ pnpm install
 在项目根目录创建 `.env` 文件：
 
 ```env
-# 数据库配置
-DATABASE_URL=sqlite:///./data/app.db
-# 生产环境使用 PostgreSQL
+# 数据库配置（可选）
+# 未设置时后端默认使用绝对路径 cloud/backend/data/app.db
+# 生产环境使用 PostgreSQL：
 # DATABASE_URL=postgresql://username:password@localhost:5432/dbname
 
 # 应用配置（与现有后端一致）

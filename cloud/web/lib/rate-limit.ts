@@ -153,9 +153,10 @@ export function createRateLimit(config: RateLimitConfig) {
 }
 
 // Predefined rate limiters for different endpoints
+// Note: Frontend rate limits are UX helpers only; backend limits are authoritative.
 export const redeemRateLimit = createRateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  maxRequests: 5, // 5 redemption attempts per 15 minutes per IP
+  windowMs: 60 * 60 * 1000, // 1 hour
+  maxRequests: 5, // 5 redemption attempts per hour per IP (mirrors backend)
 })
 
 export const adminRateLimit = createRateLimit({

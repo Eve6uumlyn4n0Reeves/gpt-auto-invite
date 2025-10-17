@@ -20,11 +20,12 @@
   - `ENV` 或 `APP_ENV`：`dev` / `production`（生产时触发严格校验）
   - `DOMAIN` 生产域名（用于 Cookie/Security Headers）
 - 数据库
-  - `DATABASE_URL` 开发缺省 SQLite，生产建议 Postgres，如：`postgresql+psycopg2://user:pass@postgres:5432/invite_db`
+  - `DATABASE_URL` 开发缺省 SQLite；未设置时默认使用绝对路径 `cloud/backend/data/app.db`（避免工作目录差异）。生产建议 Postgres，如：`postgresql+psycopg2://user:pass@postgres:5432/invite_db`
 - 限流/Redis（推荐生产启用）
   - `RATE_LIMIT_ENABLED` 默认 `true`
   - `REDIS_URL`（或 `REDIS_HOST/REDIS_PORT/REDIS_DB/REDIS_PASSWORD`）
   - `RATE_LIMIT_NAMESPACE` 默认 `gpt_invite:rate`
+  - 说明：前端内存限流仅作用户体验提示，最终限流以后端（Redis/内存回退）为准
 - 策略与安全
   - `ADMIN_SESSION_TTL_SECONDS` 管理会话 TTL（秒），默认 7 天
   - `TOKEN_DEFAULT_TTL_DAYS` Token 回退有效天数（默认 40）
@@ -46,7 +47,9 @@
      - `X-Ingest-Sign`: `hex(hmac_sha256(key, method + "\n" + path + "\n" + ts + "\n" + sha256hex(body)))`
    - 结合限流键 `ingest:by_ip`
 
-说明：当前后端未使用 JWT；部署文档中如出现 `JWT_*`、`ALLOWED_ORIGINS`、文件上传相关变量，属于旧文档遗留，不必配置。
+说明：
+- 当前后端未使用 JWT；如文档中出现 `JWT_*`、`ALLOWED_ORIGINS`、文件上传相关变量，属于旧文档遗留，不必配置。
+- 后端已将公开兑换接口 `/api/redeem` 与 `/api/redeem/resend` 纳入 CSRF 白名单，建议前端通过 `app/api/redeem` 路由转发访问。
 
 ---
 

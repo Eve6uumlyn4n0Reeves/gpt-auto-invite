@@ -131,6 +131,8 @@ app.add_middleware(InputValidationMiddleware)
 app.add_middleware(CSRFMiddleware, excluded_paths=[
     "/api/public/",
     "/api/ingest/",
+    "/api/redeem",
+    "/api/redeem/resend",
     "/health",
     "/docs",
     "/openapi.json",

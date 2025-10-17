@@ -45,7 +45,8 @@ ENCRYPTION_KEY=your-encryption-key-here
 ### 可选的环境变量
 
 ```bash
-# 数据库连接（默认使用SQLite）
+# 数据库连接（可选）
+# 未设置时后端默认使用绝对路径 cloud/backend/data/app.db
 # DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/dbname
 
 # SMTP配置（邮件发送）

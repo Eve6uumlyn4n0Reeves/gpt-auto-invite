@@ -102,11 +102,11 @@ cd cloud/scripts
 
 ## 配置迁移
 
-### 旧配置处理
+### 旧配置处理（历史参考，勿在新代码中使用）
 
 原有的内存限流器配置：
 ```python
-# 旧配置 (已废弃)
+# 旧配置 (已废弃，仅作迁移对照，生产环境请使用 Redis 分布式限流器)
 redeem_rl = SimpleRateLimiter(max_events=60, per_seconds=60)
 resend_rl = SimpleRateLimiter(max_events=10, per_seconds=60)
 ```

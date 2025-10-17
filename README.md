@@ -47,7 +47,7 @@
 │   │   │   ├── models/     # 数据模型
 │   │   │   └── utils/      # 工具函数
 │   │   ├── Dockerfile.backend
-│   │   └── requirements.txt
+│   │   └── requirements.backend.txt
 │   ├── web/                # Next.js 管理后台
 │   │   ├── app/
 │   │   │   ├── admin/      # 管理页面
@@ -90,7 +90,7 @@ cd "gpt invite"
 #### 2. 启动后端服务
 ```bash
 cd cloud/backend
-pip install -r requirements.txt
+pip install -r requirements.backend.txt
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
@@ -103,10 +103,11 @@ pnpm dev
 ```
 
 #### 4. 配置环境变量
-在 `cloud` 目录创建 `.env` 文件：
+在 `cloud` 目录创建 `.env` 文件（示例）：
 ```env
-# 数据库配置
-DATABASE_URL=sqlite:///./data/app.db
+# 数据库配置（可选）
+# 未设置时默认使用绝对路径 cloud/backend/data/app.db
+# DATABASE_URL=postgresql://username:password@localhost:5432/dbname
 
 # 管理员配置
 ADMIN_INITIAL_PASSWORD=your_secure_password
@@ -192,7 +193,7 @@ GUI 小贴士
 - **框架**: FastAPI 0.104+
 - **数据库**: SQLite / PostgreSQL 15+
 - **ORM**: SQLAlchemy 2.0+
-- **认证**: JWT Token
+- **认证**: 管理会话 Cookie（itsdangerous 签名）
 - **加密**: AES-256-GCM
 
 ### 前端
@@ -233,7 +234,7 @@ graph TB
 
 ## 🔐 安全特性
 
-- ✅ JWT 身份认证
+- ✅ 管理会话签名认证（itsdangerous）
 - ✅ API 接口权限控制
 - ✅ 敏感数据加密存储
 - ✅ SQL 注入防护
