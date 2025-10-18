@@ -24,7 +24,7 @@
   - `docker-compose up -d`（参见 `cloud/docker-compose.yml`）。
 
 ## 管理后台（使用说明）
-- 登录：首次密码取环境变量 `ADMIN_INITIAL_PASSWORD`（默认 `admin`，生产必须修改）。
+- 登录：首次密码取环境变量 `ADMIN_INITIAL_PASSWORD`（默认 `admin123`，生产必须修改）。
 - 母号看板：展示每个母号的座位使用率与启用团队列表。
 - 码状态总览：展示兑换码与邮箱/母号/团队映射与使用时间，支持状态/母号/团队/批次筛选和搜索。
 - 兑换码：生成后可“一键复制全部”或“下载 TXT”。

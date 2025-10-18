@@ -28,7 +28,7 @@ nano .env.local
 **必需配置**：
 ```bash
 BACKEND_URL=http://localhost:8000
-ADMIN_INITIAL_PASSWORD=admin
+ADMIN_INITIAL_PASSWORD=admin123
 SECRET_KEY=your-secret-key
 ENCRYPTION_KEY=your-encryption-key
 ```
@@ -49,7 +49,7 @@ ENCRYPTION_KEY=your-encryption-key
 ## Admin登录
 
 - 地址: http://localhost:3000/admin
-- 密码: `admin`（在.env.local中配置）
+- 密码: `admin123`（在.env.local中配置）
 
 ## 故障排除
 

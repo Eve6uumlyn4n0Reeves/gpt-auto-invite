@@ -27,7 +27,7 @@ print('✅ 数据库表已创建')
 
 db = SessionLocal()
 try:
-    pwd = os.getenv('ADMIN_INITIAL_PASSWORD', 'admin')
+    pwd = os.getenv('ADMIN_INITIAL_PASSWORD', 'admin123')
     create_or_update_admin_default(db, hash_password(pwd))
     print('✅ 管理员初始密码已设置/存在')
 finally:

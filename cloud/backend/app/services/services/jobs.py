@@ -52,7 +52,9 @@ def _is_pg(db: Session) -> bool:
     dialect = getattr(getattr(db, 'bind', None), 'dialect', None)
     return bool(dialect and getattr(dialect, 'name', '').startswith('postgres'))
 
-def get_next_pending_job(db: Session) -> models.BatchJob | None:
+from typing import Optional
+
+def get_next_pending_job(db: Session) -> Optional[models.BatchJob]:
     now = datetime.utcnow()
     # 使过期 running 的任务可再次被调度
     try:
@@ -130,6 +132,9 @@ def _process_users_job(db: Session, job: models.BatchJob) -> Tuple[int, int]:
     failed = 0
 
     action = job.job_type
+    # Heartbeat/lease renewal: extend visibility periodically during long runs
+    heartbeat_interval = max(5, int(settings.job_visibility_timeout_seconds / 3))
+    last_heartbeat = time.time()
     for uid in ids:
         inv = db.query(models.InviteRequest).filter(models.InviteRequest.id == uid).first()
         if not inv or not inv.email or not inv.team_id:
@@ -147,6 +152,17 @@ def _process_users_job(db: Session, job: models.BatchJob) -> Tuple[int, int]:
             success += 1
         else:
             failed += 1
+        # Heartbeat: extend lease if needed
+        now_ts = time.time()
+        if now_ts - last_heartbeat >= heartbeat_interval:
+            last_heartbeat = now_ts
+            try:
+                job.visible_until = datetime.utcnow() + __import__("datetime").timedelta(seconds=settings.job_visibility_timeout_seconds)
+                db.add(job)
+                db.commit()
+                db.refresh(job)
+            except Exception:
+                db.rollback()
     return success, failed
 
 

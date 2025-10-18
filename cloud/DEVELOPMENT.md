@@ -32,7 +32,7 @@ BACKEND_URL=http://localhost:8000
 NODE_ENV=development
 
 # Admin初始密码
-ADMIN_INITIAL_PASSWORD=admin
+ADMIN_INITIAL_PASSWORD=admin123
 
 # 安全密钥（生产环境必须更改）
 SECRET_KEY=your-secret-key-here

@@ -1,7 +1,9 @@
 """
 异步批量任务路由
 """
+from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import json
@@ -43,7 +45,7 @@ def batch_users_async(
 def list_jobs(
     request: Request,
     db: Session = Depends(get_db),
-    status: str | None = Query(None),
+    status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
@@ -110,4 +112,3 @@ def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "payload": json.loads(job.payload_json or "{}"),
     }
-

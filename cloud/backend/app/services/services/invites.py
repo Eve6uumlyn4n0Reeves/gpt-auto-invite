@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence, Set
 
 from sqlalchemy import select, update
+import time as _time
 from sqlalchemy.orm import Session
 
 from app import models, provider
@@ -269,7 +270,8 @@ class InviteService:
                     self.db.add(seat)
                     self.db.commit()
             else:
-                claim_attempts = 3
+                claim_attempts = max(1, settings.seat_claim_retry_attempts)
+                backoff_ms = max(1, settings.seat_claim_backoff_ms_base)
                 while claim_attempts > 0 and seat is None:
                     claim_attempts -= 1
                     candidate = self.db.get(models.SeatAllocation, choice.seat_id)
@@ -294,6 +296,9 @@ class InviteService:
                         seat = self.db.get(models.SeatAllocation, candidate.id)
                         break
                     # 否则说明并发冲突，重试
+                    if claim_attempts > 0:
+                        _time.sleep(min(backoff_ms / 1000.0, settings.seat_claim_backoff_ms_max / 1000.0))
+                        backoff_ms = min(backoff_ms * 2, settings.seat_claim_backoff_ms_max)
 
             if seat is None:
                 if switch_remaining > 0:

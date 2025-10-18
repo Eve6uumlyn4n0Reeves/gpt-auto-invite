@@ -68,8 +68,10 @@ export const RedeemFormEnhanced: React.FC = () => {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.message || `HTTP ${response.status}`)
+        const errorData = await response.json().catch(() => ({} as any))
+        const message = (errorData && (errorData.detail || errorData.message || errorData.error))
+          || `请求失败 (${response.status})`
+        throw new Error(message)
       }
 
       const data: RedeemResponse = await response.json()
@@ -101,8 +103,10 @@ export const RedeemFormEnhanced: React.FC = () => {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.message || `HTTP ${response.status}`)
+        const errorData = await response.json().catch(() => ({} as any))
+        const message = (errorData && (errorData.detail || errorData.message || errorData.error))
+          || `请求失败 (${response.status})`
+        throw new Error(message)
       }
 
       const data = await response.json()

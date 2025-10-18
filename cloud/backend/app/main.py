@@ -17,6 +17,10 @@ from app.config import settings
 from app.middleware import SecurityHeadersMiddleware, CSRFMiddleware, InputValidationMiddleware
 from app.services.services.maintenance import cleanup_stale_held, cleanup_expired_mother_teams
 from app.services.services.rate_limiter_service import init_rate_limiter, close_rate_limiter
+try:
+    from app.metrics_prom import maintenance_lock_miss_total, maintenance_lock_acquired_total
+except Exception:
+    maintenance_lock_miss_total = maintenance_lock_acquired_total = None
 
 logging.basicConfig(level=logging.INFO)
 
@@ -43,8 +47,19 @@ async def lifespan(_: FastAPI):
             lock_name = f"{settings.rate_limit_namespace}:maintenance_lock"
             lock_client, lock_token = try_acquire_lock(lock_name, lock_ttl)
             if lock_client is None and lock_token is None:
-                # 未获取到锁（被其他实例占用），直接返回
+                # 未获取到锁（被其他实例占用），记录一次指标便于观测
+                try:
+                    if maintenance_lock_miss_total is not None:
+                        maintenance_lock_miss_total.inc()
+                except Exception:
+                    pass
                 return
+            else:
+                try:
+                    if maintenance_lock_acquired_total is not None and lock_client is not None:
+                        maintenance_lock_acquired_total.inc()
+                except Exception:
+                    pass
         except Exception:
             # 获取锁异常时，继续执行（单实例或无 Redis 场景）
             pass
@@ -158,7 +173,7 @@ def health():
 if settings.env in ("prod", "production"):
     if not settings.encryption_key_b64 or settings.secret_key == "change-me-secret-key":
         raise RuntimeError("In production, ENCRYPTION_KEY and SECRET_KEY must be set.")
-    if settings.admin_initial_password == "admin":
-        raise RuntimeError("In production, ADMIN_INITIAL_PASSWORD must not be the default 'admin'.")
+    if settings.admin_initial_password in ("admin", "admin123"):
+        raise RuntimeError("In production, ADMIN_INITIAL_PASSWORD must not be the default 'admin' or 'admin123'.")
     if settings.extra_password:
         raise RuntimeError("In production, EXTRA_PASSWORD is not allowed.")

@@ -60,7 +60,7 @@
 ```
 BACKEND_URL=http://localhost:8000
 NODE_ENV=development
-ADMIN_INITIAL_PASSWORD=admin
+ADMIN_INITIAL_PASSWORD=admin123
 SECRET_KEY=dev-secret-key
 # 生成：openssl rand -base64 32
 ENCRYPTION_KEY=<base64-32-bytes>
@@ -103,7 +103,7 @@ docker compose -f docker-compose.prod.yml --env-file .env up -d
 - Nginx：`80/443` 端口。将证书放到 `cloud/ssl` 并更新 `cloud/nginx.conf`。
 
 3) 安全要点（后端会强校验）
-- `ENV=production` 时，若 `ENCRYPTION_KEY` 或 `SECRET_KEY` 未设置，或初始密码为 `admin`，应用将拒绝启动
+- `ENV=production` 时，若 `ENCRYPTION_KEY` 或 `SECRET_KEY` 未设置，或初始密码为 `admin`/`admin123`，应用将拒绝启动
 - 生产禁止设置 `EXTRA_PASSWORD`
 - `DOMAIN` 将影响 Cookie 的安全属性与 CSRF 检查
 

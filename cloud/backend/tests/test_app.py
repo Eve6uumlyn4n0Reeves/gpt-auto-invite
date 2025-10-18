@@ -57,7 +57,7 @@ def test_redeem_invalid_code(test_client: TestClient):
 
 
 def test_admin_login_success(test_client: TestClient):
-    response = test_client.post("/api/admin/login", json={"password": "admin"})
+    response = test_client.post("/api/admin/login", json={"password": "admin123"})
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert "admin_session" in response.cookies
@@ -69,7 +69,7 @@ def test_admin_login_wrong_password(test_client: TestClient):
 
 
 def test_admin_csrf_required(test_client: TestClient):
-    login_resp = test_client.post("/api/admin/login", json={"password": "admin"})
+    login_resp = test_client.post("/api/admin/login", json={"password": "admin123"})
     assert login_resp.status_code == 200
 
     payload = {
@@ -239,7 +239,7 @@ def test_remove_member_returns_failure_when_member_missing(db_session, sample_mo
 def test_admin_batch_users_resend_success(test_client: TestClient, db_session, sample_invites):
     asyncio.run(close_rate_limiter())
 
-    login_resp = test_client.post("/api/admin/login", json={"password": "admin"})
+    login_resp = test_client.post("/api/admin/login", json={"password": "admin123"})
     assert login_resp.status_code == 200
 
     csrf = test_client.get("/api/admin/csrf-token")

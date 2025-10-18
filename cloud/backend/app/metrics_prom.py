@@ -19,6 +19,14 @@ if Counter is not None:
         labelnames=('endpoint', 'team_id', 'status'),
         buckets=(5, 10, 25, 50, 100, 200, 400, 800, 1600, 3200)
     )
+    maintenance_lock_acquired_total = Counter(
+        'maintenance_lock_acquired_total',
+        'Total number of times maintenance lock acquired'
+    )
+    maintenance_lock_miss_total = Counter(
+        'maintenance_lock_miss_total',
+        'Total number of times maintenance lock acquisition missed'
+    )
 else:
     class _Dummy:
         def labels(self, **kwargs):
@@ -30,3 +38,5 @@ else:
     
     provider_calls_total = _Dummy()
     provider_latency_ms = _Dummy()
+    maintenance_lock_acquired_total = _Dummy()
+    maintenance_lock_miss_total = _Dummy()

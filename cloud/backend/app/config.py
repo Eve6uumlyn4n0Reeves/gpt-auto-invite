@@ -13,7 +13,7 @@ class Settings:
     # 原始数据库URL（如果未提供，则使用绝对路径SQLite默认值）
     database_url_raw: str = os.getenv("DATABASE_URL", "")
     encryption_key_b64: str = os.getenv("ENCRYPTION_KEY", "")
-    admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "admin")
+    admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "admin123")
     http_proxy: Optional[str] = os.getenv("HTTP_PROXY")
     https_proxy: Optional[str] = os.getenv("HTTPS_PROXY")
     secret_key: str = os.getenv("SECRET_KEY", "change-me-secret-key")
@@ -23,6 +23,10 @@ class Settings:
     token_default_ttl_days: int = int(os.getenv("TOKEN_DEFAULT_TTL_DAYS", "40"))
     # 座位占位 TTL（秒），邀请发送前的持有时间，避免并发抢占
     seat_hold_ttl_seconds: int = int(os.getenv("SEAT_HOLD_TTL_SECONDS", "30"))
+    # 并发占位重试设置
+    seat_claim_retry_attempts: int = int(os.getenv("SEAT_CLAIM_RETRY_ATTEMPTS", "5"))
+    seat_claim_backoff_ms_base: int = int(os.getenv("SEAT_CLAIM_BACKOFF_MS_BASE", "10"))
+    seat_claim_backoff_ms_max: int = int(os.getenv("SEAT_CLAIM_BACKOFF_MS_MAX", "200"))
 
     extra_password: Optional[str] = os.getenv("EXTRA_PASSWORD")
     extra_password_start_at_raw: Optional[str] = os.getenv("EXTRA_PASSWORD_START_AT")
@@ -55,6 +59,11 @@ class Settings:
     # 批量任务队列
     job_visibility_timeout_seconds: int = int(os.getenv("JOB_VISIBILITY_TIMEOUT_SECONDS", "300"))
     job_max_attempts: int = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+    # 数据库连接池（仅对非 SQLite 生效）
+    db_pool_size: int = int(os.getenv("DB_POOL_SIZE", "20"))
+    db_max_overflow: int = int(os.getenv("DB_MAX_OVERFLOW", "30"))
+    db_pool_timeout: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    db_pool_recycle: int = int(os.getenv("DB_POOL_RECYCLE", "3600"))
 
     @property
     def database_url(self) -> str:
