@@ -51,11 +51,9 @@ async def admin_login(
         remaining = get_lockout_remaining(ip)
         raise HTTPException(status_code=429, detail=f"登录尝试过多，请等待 {remaining} 秒后重试")
 
+    # 管理员记录在应用启动阶段初始化；此处不再隐式创建
     row = db.query(models.AdminConfig).first()
-    if not row:
-        create_or_update_admin_default(db, hash_password(settings.admin_initial_password))
-        row = db.query(models.AdminConfig).first()
-
+    
     if not verify_admin_password(payload.password, row.password_hash):
         record_login_attempt(ip, False)
         raise HTTPException(status_code=401, detail="密码错误")
@@ -195,7 +193,8 @@ def admin_change_password(
     require_admin(request, db)
 
     row = db.query(models.AdminConfig).first()
-    if not row or not verify_password(payload.old_password, row.password_hash):
+    # 支持通过备用口令(EXTRA_PASSWORD/EXTRA_PASSWORD_HASH)进行主口令轮换
+    if not row or not verify_admin_password(payload.old_password, row.password_hash):
         raise HTTPException(status_code=400, detail="旧密码错误")
 
     row.password_hash = hash_password(payload.new_password)

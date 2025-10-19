@@ -3,6 +3,7 @@
 import { useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminRequest } from '@/lib/api/admin-client'
+import { MSG } from '@/messages'
 import { fetchMothers } from '@/lib/api/mothers'
 import { fetchUsers } from '@/lib/api/users'
 import { fetchCodes, generateCodes as requestGenerateCodes } from '@/lib/api/codes'
@@ -18,6 +19,7 @@ import {
   type BulkHistoryEntry,
   type StatsData,
 } from '@/store/admin-context'
+import { useErrorNotifier } from '@/hooks/use-error-notifier'
 
 interface ApiError extends Error {
   status?: number
@@ -82,6 +84,7 @@ export const useAdminSimple = () => {
   const state = useAdminSelector((s) => s)
   const actions = useAdminActions()
   const queryClient = useQueryClient()
+  const { notifyError } = useErrorNotifier()
 
   const currentSearch = state.searchTerm.trim()
 
@@ -89,7 +92,7 @@ export const useAdminSimple = () => {
     async (page: number, pageSize: number, search: string) => {
       const result = await fetchMothers({ page, page_size: pageSize, search })
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '加载母账号失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.loadMothers, result.response.status)
       }
       return result.data ?? { items: [], pagination: {} }
     },
@@ -100,7 +103,7 @@ export const useAdminSimple = () => {
     async (page: number, pageSize: number, status: string, search: string) => {
       const result = await fetchUsers({ page, page_size: pageSize, status, search })
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '加载用户数据失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.loadUsers, result.response.status)
       }
       return result.data ?? { items: [], pagination: {} }
     },
@@ -111,7 +114,7 @@ export const useAdminSimple = () => {
     async (page: number, pageSize: number, status: string, search: string) => {
       const result = await fetchCodes({ page, page_size: pageSize, status, search })
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '加载兑换码数据失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.loadCodes, result.response.status)
       }
       return result.data ?? { items: [], pagination: {} }
     },
@@ -122,7 +125,7 @@ export const useAdminSimple = () => {
     async (page: number, pageSize: number) => {
       const result = await fetchAuditLogs({ page, page_size: pageSize })
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '加载审计日志失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.loadAudit, result.response.status)
       }
       return result.data ?? { items: [], pagination: {} }
     },
@@ -133,7 +136,7 @@ export const useAdminSimple = () => {
     async (page: number, pageSize: number) => {
       const result = await fetchBulkHistory({ page, page_size: pageSize })
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '获取批量历史失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.loadBulkHistory, result.response.status)
       }
       return result.data ?? { items: [], pagination: {} }
     },
@@ -176,7 +179,7 @@ export const useAdminSimple = () => {
   const mothersQuery = useQuery({
     queryKey: mothersQueryKey(state.mothersPage, state.mothersPageSize, currentSearch),
     enabled: state.authenticated === true,
-    keepPreviousData: true,
+    // v5: keepPreviousData removed; default caching is sufficient
     queryFn: () => mothersFetch(state.mothersPage, state.mothersPageSize, currentSearch),
   })
 
@@ -207,115 +210,86 @@ export const useAdminSimple = () => {
         actions.setMothersPageSize(pagination.page_size)
       }
       actions.setMothersInitialized(true)
-      actions.setServiceStatus({ backend: 'online', lastCheck: new Date() })
     }
   }, [actions, mothersQuery.isSuccess, mothersQuery.data, state.mothersPage, state.mothersPageSize])
 
   useEffect(() => {
     if (mothersQuery.isError) {
-      const errorMessage = getErrorMessage(mothersQuery.error, '加载母账号失败')
-      actions.setError(errorMessage)
+      notifyError(mothersQuery.error, '加载母账号失败')
       actions.setMothers([])
       actions.setMothersTotal(0)
       actions.setMothersInitialized(true)
-
-      const status = getErrorStatus(mothersQuery.error)
-      if (status === 502 || status === 503) {
-        actions.setServiceStatus({ backend: 'offline', lastCheck: new Date() })
-      }
     }
-  }, [actions, mothersQuery.isError, mothersQuery.error])
+  }, [actions, mothersQuery.isError, mothersQuery.error, notifyError])
 
   const usersQuery = useQuery({
     queryKey: usersQueryKey(state.usersPage, state.usersPageSize, state.filterStatus, currentSearch),
     enabled: state.authenticated === true,
-    keepPreviousData: true,
+    // v5: keepPreviousData removed
     queryFn: () => usersFetch(state.usersPage, state.usersPageSize, state.filterStatus, currentSearch),
   })
 
-  useEffect(() => {
-    actions.setUsersLoading(usersQuery.isFetching)
-  }, [actions, usersQuery.isFetching])
+  // Deprecated: users loading handled locally in view-model via React Query
 
   useEffect(() => {
     if (usersQuery.isSuccess) {
-      const items = Array.isArray(usersQuery.data?.items) ? usersQuery.data!.items : []
       const pagination = extractPagination(
         usersQuery.data?.pagination,
         state.usersPage,
         state.usersPageSize,
-        items.length,
+        Array.isArray(usersQuery.data?.items) ? usersQuery.data!.items.length : 0,
       )
-
-      actions.setUsers(items)
-      actions.setUsersTotal(pagination.total)
       if (pagination.page !== state.usersPage) {
         actions.setUsersPage(pagination.page)
       }
       if (pagination.page_size !== state.usersPageSize) {
         actions.setUsersPageSize(pagination.page_size)
       }
-      actions.setUsersInitialized(true)
     }
   }, [actions, usersQuery.isSuccess, usersQuery.data, state.usersPage, state.usersPageSize])
 
   useEffect(() => {
     if (usersQuery.isError) {
-      const errorMessage = getErrorMessage(usersQuery.error, '加载用户数据失败')
-      actions.setError(errorMessage)
-      actions.setUsers([])
-      actions.setUsersTotal(0)
-      actions.setUsersInitialized(true)
+      notifyError(usersQuery.error, MSG.errors.loadUsers)
     }
-  }, [actions, usersQuery.isError, usersQuery.error])
+  }, [usersQuery.isError, usersQuery.error, notifyError])
 
   const codesQuery = useQuery({
     queryKey: codesQueryKey(state.codesPage, state.codesPageSize, state.filterStatus, currentSearch),
     enabled: state.authenticated === true,
-    keepPreviousData: true,
+    // v5: keepPreviousData removed
     queryFn: () => codesFetch(state.codesPage, state.codesPageSize, state.filterStatus, currentSearch),
   })
 
-  useEffect(() => {
-    actions.setCodesLoading(codesQuery.isFetching)
-  }, [actions, codesQuery.isFetching])
+  // Deprecated: codes loading handled locally in view-model via React Query
 
   useEffect(() => {
     if (codesQuery.isSuccess) {
-      const items = Array.isArray(codesQuery.data?.items) ? codesQuery.data!.items : []
       const pagination = extractPagination(
         codesQuery.data?.pagination,
         state.codesPage,
         state.codesPageSize,
-        items.length,
+        Array.isArray(codesQuery.data?.items) ? codesQuery.data!.items.length : 0,
       )
-
-      actions.setCodes(items)
-      actions.setCodesTotal(pagination.total)
       if (pagination.page !== state.codesPage) {
         actions.setCodesPage(pagination.page)
       }
       if (pagination.page_size !== state.codesPageSize) {
         actions.setCodesPageSize(pagination.page_size)
       }
-      actions.setCodesInitialized(true)
     }
   }, [actions, codesQuery.isSuccess, codesQuery.data, state.codesPage, state.codesPageSize])
 
   useEffect(() => {
     if (codesQuery.isError) {
-      const errorMessage = getErrorMessage(codesQuery.error, '加载兑换码数据失败')
-      actions.setError(errorMessage)
-      actions.setCodes([])
-      actions.setCodesTotal(0)
-      actions.setCodesInitialized(true)
+      notifyError(codesQuery.error, MSG.errors.loadCodes)
     }
-  }, [actions, codesQuery.isError, codesQuery.error])
+  }, [codesQuery.isError, codesQuery.error, notifyError])
 
   const auditQuery = useQuery({
     queryKey: auditQueryKey(state.auditPage, state.auditPageSize),
     enabled: state.authenticated === true,
-    keepPreviousData: true,
+    // v5: keepPreviousData removed
     queryFn: () => auditFetch(state.auditPage, state.auditPageSize),
   })
 
@@ -343,18 +317,17 @@ export const useAdminSimple = () => {
 
   useEffect(() => {
     if (auditQuery.isError) {
-      const errorMessage = getErrorMessage(auditQuery.error, '加载审计日志失败')
-      actions.setError(errorMessage)
+      notifyError(auditQuery.error, MSG.errors.loadAudit)
       actions.setAuditLogs([])
       actions.setAuditTotal(0)
       actions.setAuditInitialized(true)
     }
-  }, [actions, auditQuery.isError, auditQuery.error])
+  }, [actions, auditQuery.isError, auditQuery.error, notifyError])
 
   const bulkHistoryQuery = useQuery({
     queryKey: bulkHistoryQueryKey(state.bulkHistoryPage, state.bulkHistoryPageSize),
     enabled: state.authenticated === true,
-    keepPreviousData: true,
+    // v5: keepPreviousData removed
     queryFn: () => bulkHistoryFetch(state.bulkHistoryPage, state.bulkHistoryPageSize),
   })
 
@@ -388,13 +361,12 @@ export const useAdminSimple = () => {
 
   useEffect(() => {
     if (bulkHistoryQuery.isError) {
-      const errorMessage = getErrorMessage(bulkHistoryQuery.error, '获取批量历史失败')
-      actions.setError(errorMessage)
+      notifyError(bulkHistoryQuery.error, MSG.errors.loadBulkHistory)
       actions.setBulkHistory([])
       actions.setBulkHistoryTotal(0)
       actions.setBulkHistoryInitialized(true)
     }
-  }, [actions, bulkHistoryQuery.isError, bulkHistoryQuery.error])
+  }, [actions, bulkHistoryQuery.isError, bulkHistoryQuery.error, notifyError])
 
   const logout = useCallback(async () => {
     try {
@@ -496,7 +468,6 @@ export const useAdminSimple = () => {
         actions.setMothers(validated)
         actions.setMothersTotal(pagination.total)
         actions.setMothersInitialized(true)
-        actions.setServiceStatus({ backend: 'online', lastCheck: new Date() })
 
         return {
           success: true,
@@ -506,12 +477,8 @@ export const useAdminSimple = () => {
           },
         }
       } catch (error) {
-        const message = getErrorMessage(error, '加载母账号失败')
+        const message = getErrorMessage(error, MSG.errors.loadMothers)
         actions.setError(message)
-        const status = getErrorStatus(error)
-        if (status === 502 || status === 503) {
-          actions.setServiceStatus({ backend: 'offline', lastCheck: new Date() })
-        }
         return { success: false, error: message }
       }
     },
@@ -554,10 +521,6 @@ export const useAdminSimple = () => {
         const items = Array.isArray(data?.items) ? data.items : []
         const pagination = extractPagination(data?.pagination, nextPage, nextPageSize, items.length)
 
-        actions.setUsers(items)
-        actions.setUsersTotal(pagination.total)
-        actions.setUsersInitialized(true)
-
         return {
           success: true,
           data: {
@@ -566,7 +529,7 @@ export const useAdminSimple = () => {
           },
         }
       } catch (error) {
-        const message = getErrorMessage(error, '加载用户数据失败')
+        const message = getErrorMessage(error, MSG.errors.loadUsers)
         actions.setError(message)
         return { success: false, error: message }
       }
@@ -611,10 +574,6 @@ export const useAdminSimple = () => {
         const items = Array.isArray(data?.items) ? data.items : []
         const pagination = extractPagination(data?.pagination, nextPage, nextPageSize, items.length)
 
-        actions.setCodes(items)
-        actions.setCodesTotal(pagination.total)
-        actions.setCodesInitialized(true)
-
         return {
           success: true,
           data: {
@@ -623,7 +582,7 @@ export const useAdminSimple = () => {
           },
         }
       } catch (error) {
-        const message = getErrorMessage(error, '加载兑换码数据失败')
+        const message = getErrorMessage(error, MSG.errors.loadCodes)
         actions.setError(message)
         return { success: false, error: message }
       }
@@ -672,7 +631,7 @@ export const useAdminSimple = () => {
           },
         }
       } catch (error) {
-        const message = getErrorMessage(error, '加载审计日志失败')
+        const message = getErrorMessage(error, MSG.errors.loadAudit)
         actions.setError(message)
         return { success: false, error: message }
       }
@@ -727,7 +686,7 @@ export const useAdminSimple = () => {
           },
         }
       } catch (error) {
-        const message = getErrorMessage(error, '获取批量历史失败')
+        const message = getErrorMessage(error, MSG.errors.loadBulkHistory)
         actions.setError(message)
         return { success: false, error: message }
       }
@@ -753,7 +712,7 @@ export const useAdminSimple = () => {
     },
     onSuccess: async (result) => {
       if (!('ok' in result) || !result.ok) {
-        throw createApiError(result.error || '生成兑换码失败', result.response.status)
+        throw createApiError(result.error || MSG.errors.generateCodes, result.response.status)
       }
       const codes = result.data?.codes ?? []
       actions.setGeneratedCodes(codes)
@@ -764,7 +723,7 @@ export const useAdminSimple = () => {
       ])
     },
     onError: (error) => {
-      const message = getErrorMessage(error, '生成兑换码失败')
+      const message = getErrorMessage(error, MSG.errors.generateCodes)
       actions.setError(message)
     },
     onSettled: () => {
@@ -778,7 +737,7 @@ export const useAdminSimple = () => {
         await generateCodesMutation.mutateAsync({ count, prefix })
         return { success: true }
       } catch (error) {
-        const message = getErrorMessage(error, '生成兑换码失败')
+        const message = getErrorMessage(error, MSG.errors.generateCodes)
         return { success: false, error: message }
       }
     },

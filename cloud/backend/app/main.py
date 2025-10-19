@@ -17,6 +17,8 @@ from app.config import settings
 from app.middleware import SecurityHeadersMiddleware, CSRFMiddleware, InputValidationMiddleware
 from app.services.services.maintenance import cleanup_stale_held, cleanup_expired_mother_teams
 from app.services.services.rate_limiter_service import init_rate_limiter, close_rate_limiter
+from app.services.services.admin import create_or_update_admin_default
+from app.security import hash_password
 try:
     from app.metrics_prom import maintenance_lock_miss_total, maintenance_lock_acquired_total
 except Exception:
@@ -31,6 +33,16 @@ async def lifespan(_: FastAPI):
     init_db()
     await init_rate_limiter()
     logging.info("Rate limiter initialized")
+
+    # 初始化管理员记录（若不存在），避免登录路由隐式写库
+    try:
+        db = SessionLocal()
+        try:
+            create_or_update_admin_default(db, hash_password(settings.admin_initial_password))
+        finally:
+            db.close()
+    except Exception:
+        logging.exception("Failed to ensure default admin record on startup")
 
     stop_event = asyncio.Event()
     maintenance_task: Optional[asyncio.Task] = None

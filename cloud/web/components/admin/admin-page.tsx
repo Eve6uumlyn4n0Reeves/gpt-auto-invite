@@ -18,7 +18,7 @@ interface AdminPageProps {
   showFilters?: boolean
 }
 
-const FILTER_VIEWS = new Set<AdminTab>(['users', 'codes', 'codes-status'])
+const FILTER_VIEWS = new Set<AdminTab>(['users', 'codes'])
 
 export function AdminPage({
   view,

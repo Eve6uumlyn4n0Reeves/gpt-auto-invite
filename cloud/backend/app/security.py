@@ -155,7 +155,12 @@ def _get_lockout_remaining_memory(ip: str) -> int:
     return max(0, int(remaining))
 
 def verify_admin_password(password: str, stored_hash: str) -> bool:
-    """验证管理员密码：仅支持主密码哈希，或显式配置的额外密码（可选）。"""
+    """验证管理员密码：支持主密码哈希，或显式配置的额外密码（可选）。
+
+    改进：
+    - 支持通过 EXTRA_PASSWORD_HASH（bcrypt）配置备用口令；优先于明文 EXTRA_PASSWORD。
+    - 保持 EXTRA_PASSWORD（明文）向后兼容，建议生产禁用或迁移到哈希形式。
+    """
     # 首先检查主密码哈希
     if verify_password(password, stored_hash):
         return True
@@ -166,12 +171,18 @@ def verify_admin_password(password: str, stored_hash: str) -> bool:
     except Exception:
         now = __import__("datetime").datetime.utcnow()
 
-    if (
-        settings.extra_password
-        and password == settings.extra_password
-        and now >= settings.extra_password_start_at
-    ):
-        return True
+    # 优先校验哈希形式
+    if settings.extra_password_hash and now >= settings.extra_password_start_at:
+        try:
+            if bcrypt.verify(password, settings.extra_password_hash):
+                return True
+        except Exception:
+            pass
+
+    # 兼容明文备用口令（不推荐）
+    if settings.extra_password and now >= settings.extra_password_start_at:
+        if password == settings.extra_password:
+            return True
 
     return False
 

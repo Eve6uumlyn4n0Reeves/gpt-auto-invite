@@ -4,8 +4,6 @@ import { initialAdminState } from '@/store/admin/state'
 import type {
   AdminState,
   MotherAccount,
-  UserData,
-  CodeData,
   AuditLog,
   BulkHistoryEntry,
   StatsData,
@@ -24,24 +22,16 @@ export type AdminAction =
   | { type: 'SET_MOTHERS_PAGE_SIZE'; payload: number }
   | { type: 'SET_MOTHERS_TOTAL'; payload: number }
   | { type: 'SET_MOTHERS_INITIALIZED'; payload: boolean }
-  | { type: 'SET_USERS'; payload: UserData[] }
-  | { type: 'SET_CODES'; payload: CodeData[] }
   | { type: 'SET_AUDIT_LOGS'; payload: AuditLog[] }
   | { type: 'SET_BULK_HISTORY'; payload: BulkHistoryEntry[] }
   | { type: 'SET_STATS'; payload: StatsData | null }
   | { type: 'SET_SERVICE_STATUS'; payload: ServiceStatus }
   | { type: 'SET_LOADING'; payload: boolean }
-  | { type: 'SET_USERS_LOADING'; payload: boolean }
-  | { type: 'SET_CODES_LOADING'; payload: boolean }
   | { type: 'SET_STATS_LOADING'; payload: boolean }
   | { type: 'SET_USERS_PAGE'; payload: number }
   | { type: 'SET_USERS_PAGE_SIZE'; payload: number }
-  | { type: 'SET_USERS_TOTAL'; payload: number }
-  | { type: 'SET_USERS_INITIALIZED'; payload: boolean }
   | { type: 'SET_CODES_PAGE'; payload: number }
   | { type: 'SET_CODES_PAGE_SIZE'; payload: number }
-  | { type: 'SET_CODES_TOTAL'; payload: number }
-  | { type: 'SET_CODES_INITIALIZED'; payload: boolean }
   | { type: 'SET_AUDIT_PAGE'; payload: number }
   | { type: 'SET_AUDIT_PAGE_SIZE'; payload: number }
   | { type: 'SET_AUDIT_TOTAL'; payload: number }
@@ -93,10 +83,6 @@ export const adminReducer = (state: AdminState, action: AdminAction): AdminState
       return { ...state, mothersTotal: action.payload }
     case 'SET_MOTHERS_INITIALIZED':
       return { ...state, mothersInitialized: action.payload }
-    case 'SET_USERS':
-      return { ...state, users: action.payload }
-    case 'SET_CODES':
-      return { ...state, codes: action.payload }
     case 'SET_AUDIT_LOGS':
       return { ...state, auditLogs: action.payload }
     case 'SET_BULK_HISTORY':
@@ -109,18 +95,10 @@ export const adminReducer = (state: AdminState, action: AdminAction): AdminState
       return { ...state, usersPage: action.payload }
     case 'SET_USERS_PAGE_SIZE':
       return { ...state, usersPageSize: action.payload }
-    case 'SET_USERS_TOTAL':
-      return { ...state, usersTotal: action.payload }
-    case 'SET_USERS_INITIALIZED':
-      return { ...state, usersInitialized: action.payload }
     case 'SET_CODES_PAGE':
       return { ...state, codesPage: action.payload }
     case 'SET_CODES_PAGE_SIZE':
       return { ...state, codesPageSize: action.payload }
-    case 'SET_CODES_TOTAL':
-      return { ...state, codesTotal: action.payload }
-    case 'SET_CODES_INITIALIZED':
-      return { ...state, codesInitialized: action.payload }
     case 'SET_AUDIT_PAGE':
       return { ...state, auditPage: action.payload }
     case 'SET_AUDIT_PAGE_SIZE':
@@ -139,10 +117,6 @@ export const adminReducer = (state: AdminState, action: AdminAction): AdminState
       return { ...state, bulkHistoryInitialized: action.payload }
     case 'SET_LOADING':
       return { ...state, loading: action.payload }
-    case 'SET_USERS_LOADING':
-      return { ...state, usersLoading: action.payload }
-    case 'SET_CODES_LOADING':
-      return { ...state, codesLoading: action.payload }
     case 'SET_STATS_LOADING':
       return { ...state, statsLoading: action.payload }
     case 'SET_CURRENT_TAB':
@@ -192,14 +166,8 @@ export const adminReducer = (state: AdminState, action: AdminAction): AdminState
         mothersTotal: 0,
         mothersInitialized: false,
         mothersLoading: false,
-        users: [],
-        usersTotal: 0,
-        usersInitialized: false,
         usersPage: initialAdminState.usersPage,
         usersPageSize: initialAdminState.usersPageSize,
-        codes: [],
-        codesTotal: 0,
-        codesInitialized: false,
         codesPage: initialAdminState.codesPage,
         codesPageSize: initialAdminState.codesPageSize,
         auditLogs: [],

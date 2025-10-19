@@ -6,13 +6,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAdminContext } from '@/store/admin-context'
 import { useAdminActions } from '@/store/admin-context'
-import { useFilteredData } from '@/hooks/use-filtered-data'
 import { useMobileGestures } from '@/hooks/use-mobile-gestures'
 
 export const SearchFilters: React.FC = () => {
   const { state } = useAdminContext()
-  const { setSearchTerm, setFilterStatus, setSortBy, setSortOrder, setCodesStatusMother, setCodesStatusTeam, setCodesStatusBatch } = useAdminActions()
-  const { uniqueMothers, uniqueTeams, uniqueBatches } = useFilteredData()
+  const { setSearchTerm, setFilterStatus, setSortBy, setSortOrder } = useAdminActions()
   const { isTouch } = useMobileGestures()
 
   const [showAdvancedFilters, setShowAdvancedFilters] = React.useState(false)
@@ -108,62 +106,7 @@ export const SearchFilters: React.FC = () => {
             </div>
           </div>
 
-          {/* Additional filters for code status view */}
-          {state.currentTab === 'codes-status' && (
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <div>
-                <Label className="text-sm font-medium">母号</Label>
-                <select
-                  value={state.codesStatusMother}
-                  onChange={(e) => setCodesStatusMother(e.target.value)}
-                  className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm focus:ring-2 focus:ring-primary/20 ${
-                    isTouch ? "min-h-[44px]" : ""
-                  }`}
-                >
-                  <option value="">全部</option>
-                  {uniqueMothers.map((mother) => (
-                    <option key={mother} value={mother}>
-                      {mother}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <Label className="text-sm font-medium">团队</Label>
-                <select
-                  value={state.codesStatusTeam}
-                  onChange={(e) => setCodesStatusTeam(e.target.value)}
-                  className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm focus:ring-2 focus:ring-primary/20 ${
-                    isTouch ? "min-h-[44px]" : ""
-                  }`}
-                >
-                  <option value="">全部</option>
-                  {uniqueTeams.map((team) => (
-                    <option key={team} value={team}>
-                      {team}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <Label className="text-sm font-medium">批次</Label>
-                <select
-                  value={state.codesStatusBatch}
-                  onChange={(e) => setCodesStatusBatch(e.target.value)}
-                  className={`w-full mt-1 px-3 py-2 rounded-md border border-border/60 bg-background/50 text-sm focus:ring-2 focus:ring-primary/20 ${
-                    isTouch ? "min-h-[44px]" : ""
-                  }`}
-                >
-                  <option value="">全部</option>
-                  {uniqueBatches.map((batch) => (
-                    <option key={batch} value={batch}>
-                      {batch}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
+          {/* Codes-status specific filters are rendered in CodesStatusSection */}
         </div>
       )}
     </div>

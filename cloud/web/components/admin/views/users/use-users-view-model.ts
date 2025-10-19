@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAdminContext, useAdminActions, type UserData } from '@/store/admin-context'
 import { useAdminSimple } from '@/hooks/use-admin-simple'
-import { useFilteredData } from '@/hooks/use-filtered-data'
+import { fetchUsers } from '@/lib/api/users'
 import { useAdminBatchActions } from '@/hooks/use-admin-batch-actions'
 import { useAdminCsrfToken } from '@/hooks/use-admin-csrf-token'
 import { useNotifications } from '@/components/notification-system'
@@ -41,8 +42,8 @@ interface UsersViewModel {
 export const useUsersViewModel = (): UsersViewModel => {
   const { state } = useAdminContext()
   const { setUsersPage, setUsersPageSize } = useAdminActions()
-  const { loadUsers, loadStats } = useAdminSimple()
-  const { filteredUsers } = useFilteredData()
+  const { loadStats } = useAdminSimple()
+  const queryClient = useQueryClient()
   const { actions: batchActions } = useAdminBatchActions()
   const { ensureCsrfToken, resetCsrfToken } = useAdminCsrfToken()
   const notifications = useNotifications()
@@ -73,52 +74,60 @@ export const useUsersViewModel = (): UsersViewModel => {
     })
   }, [])
 
+  // toggleSelectAll defined after users is computed
+
+  // Query users data directly (reduce duplicated global store writes)
+  const usersQueryKey = useMemo(
+    () => ['admin', 'users', state.usersPage, state.usersPageSize, state.filterStatus, debouncedSearchTerm] as const,
+    [state.usersPage, state.usersPageSize, state.filterStatus, debouncedSearchTerm],
+  )
+
+  const usersQuery = useQuery({
+    queryKey: usersQueryKey,
+    enabled: state.authenticated === true,
+    // v5: keepPreviousData removed
+    queryFn: () =>
+      fetchUsers({
+        page: state.usersPage,
+        page_size: state.usersPageSize,
+        status: state.filterStatus,
+        search: debouncedSearchTerm,
+      }).then((res) => {
+        if (!('ok' in res) || !res.ok) {
+          throw new Error(res.error || '加载用户数据失败')
+        }
+        return res.data ?? { items: [], pagination: {} }
+      }),
+  })
+
+  const users = useMemo(() => (Array.isArray(usersQuery.data?.items) ? usersQuery.data!.items : []), [usersQuery.data])
+  const usersTotal = useMemo(() => usersQuery.data?.pagination?.total ?? users.length, [usersQuery.data, users.length])
+
+  const allUsersSelected = users.length > 0 && users.every((user) => selectedUsers.includes(user.id))
+
+  useEffect(() => {
+    setSelectedUsers((prev) => prev.filter((id) => users.some((user) => user.id === id)))
+  }, [users])
+
   const toggleSelectAll = useCallback(
     (next: boolean) => {
       if (next) {
-        const allIds = filteredUsers.map((user) => user.id)
+        const allIds = users.map((user) => user.id)
         setSelectedUsers(allIds)
       } else {
         setSelectedUsers([])
       }
     },
-    [filteredUsers],
+    [users],
   )
 
-  const allUsersSelected =
-    filteredUsers.length > 0 && filteredUsers.every((user) => selectedUsers.includes(user.id))
-
-  useEffect(() => {
-    setSelectedUsers((prev) => prev.filter((id) => filteredUsers.some((user) => user.id === id)))
-  }, [filteredUsers])
-
   const refreshUsers = useCallback(() => {
-    void loadUsers({
-      page: state.usersPage,
-      pageSize: state.usersPageSize,
-      status: state.filterStatus,
-      search: state.searchTerm,
-    })
-  }, [loadUsers, state.filterStatus, state.searchTerm, state.usersPage, state.usersPageSize])
+    queryClient.invalidateQueries({ queryKey: usersQueryKey })
+  }, [queryClient, usersQueryKey])
 
-  useEffect(() => {
-    if (state.authenticated !== true) return
-    void loadUsers({
-      page: state.usersPage,
-      pageSize: state.usersPageSize,
-      status: state.filterStatus,
-      search: debouncedSearchTerm,
-    })
-  }, [
-    debouncedSearchTerm,
-    loadUsers,
-    state.authenticated,
-    state.filterStatus,
-    state.usersPage,
-    state.usersPageSize,
-  ])
-
-  useAdminAutoRefresh(refreshUsers, state.authenticated === true)
+  // Auto refresh current query
+  
+  useAdminAutoRefresh(() => usersQuery.refetch(), state.authenticated === true)
 
   const handleUserAction = useCallback(
     async (user: UserData, action: UserAction) => {
@@ -318,14 +327,9 @@ export const useUsersViewModel = (): UsersViewModel => {
     (page: number) => {
       const next = Math.max(1, page)
       setUsersPage(next)
-      void loadUsers({
-        page: next,
-        pageSize: state.usersPageSize,
-        status: state.filterStatus,
-        search: state.searchTerm,
-      })
+      refreshUsers()
     },
-    [loadUsers, setUsersPage, state.filterStatus, state.searchTerm, state.usersPageSize],
+    [refreshUsers, setUsersPage, state.usersPageSize],
   )
 
   const handlePageSizeChange = useCallback(
@@ -333,14 +337,9 @@ export const useUsersViewModel = (): UsersViewModel => {
       const nextSize = Math.max(1, Math.min(pageSize, 200))
       setUsersPageSize(nextSize)
       setUsersPage(1)
-      void loadUsers({
-        page: 1,
-        pageSize: nextSize,
-        status: state.filterStatus,
-        search: state.searchTerm,
-      })
+      refreshUsers()
     },
-    [loadUsers, setUsersPage, setUsersPageSize, state.filterStatus, state.searchTerm],
+    [refreshUsers, setUsersPage, setUsersPageSize],
   )
 
   const userTableColumns = useMemo<UserTableColumn[]>(
@@ -357,8 +356,8 @@ export const useUsersViewModel = (): UsersViewModel => {
   )
 
   return {
-    usersLoading: state.usersLoading,
-    filteredUsers,
+    usersLoading: usersQuery.isFetching,
+    filteredUsers: users,
     userTableColumns,
     containerHeight,
     itemHeight,
@@ -374,7 +373,7 @@ export const useUsersViewModel = (): UsersViewModel => {
     handleUserRowAction,
     usersPage: state.usersPage,
     usersPageSize: state.usersPageSize,
-    usersTotal: state.usersTotal,
+    usersTotal,
     handlePageChange,
     handlePageSizeChange,
   }

@@ -111,20 +111,15 @@ export interface AdminState {
   mothersTotal: number
   mothersInitialized: boolean
   mothersLoading: boolean
-  users: UserData[]
-  codes: CodeData[]
   auditLogs: AuditLog[]
   bulkHistory: BulkHistoryEntry[]
   stats: StatsData | null
   serviceStatus: ServiceStatus
   usersPage: number
   usersPageSize: number
-  usersTotal: number
-  usersInitialized: boolean
+  // deprecated: per-view models query directly
   codesPage: number
   codesPageSize: number
-  codesTotal: number
-  codesInitialized: boolean
   auditPage: number
   auditPageSize: number
   auditTotal: number
@@ -134,8 +129,6 @@ export interface AdminState {
   bulkHistoryTotal: number
   bulkHistoryInitialized: boolean
   loading: boolean
-  usersLoading: boolean
-  codesLoading: boolean
   statsLoading: boolean
   currentTab: string
   searchTerm: string

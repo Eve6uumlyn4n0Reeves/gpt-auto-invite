@@ -47,13 +47,11 @@ export const buildUserTableColumns = ({
   {
     key: 'email',
     label: '邮箱',
-    mobile: { priority: 'high' as const },
     render: (value: string) => <span className="font-medium text-foreground">{value}</span>,
   },
   {
     key: 'status',
     label: '状态',
-    mobile: { priority: 'medium' as const, label: '状态' },
     render: (value: string) => (
       <span
         className={`px-2 py-1 rounded-full text-xs font-medium border ${
@@ -67,25 +65,21 @@ export const buildUserTableColumns = ({
   {
     key: 'team_name',
     label: '团队',
-    mobile: { priority: 'medium' as const, label: '团队' },
     render: (value: string) => value || '未分配',
   },
   {
     key: 'code_used',
     label: '兑换码',
-    mobile: { priority: 'low' as const },
     render: (value: string) => value || '无',
   },
   {
     key: 'invited_at',
     label: '邀请时间',
-    mobile: { priority: 'low' as const },
     render: (value: string) => (value ? new Date(value).toLocaleString() : '-'),
   },
   {
     key: 'actions',
     label: '操作',
-    mobile: { priority: 'low' as const, label: '操作' },
     render: (_: unknown, user: UserData) => (
       <div className="flex flex-wrap gap-2">
         <Button

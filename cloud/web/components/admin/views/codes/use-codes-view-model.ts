@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAdminContext, useAdminActions, type CodeData } from '@/store/admin-context'
 import { useAdminSimple } from '@/hooks/use-admin-simple'
-import { useFilteredData } from '@/hooks/use-filtered-data'
+import { fetchCodes } from '@/lib/api/codes'
 import { useAdminBatchActions } from '@/hooks/use-admin-batch-actions'
 import { useAdminCsrfToken } from '@/hooks/use-admin-csrf-token'
 import { useAdminQuota } from '@/hooks/use-admin-quota'
@@ -65,8 +66,8 @@ export const useCodesViewModel = (): CodesViewModel => {
     setShowGenerated,
     setGenerateLoading,
   } = useAdminActions()
-  const { loadCodes, loadStats } = useAdminSimple()
-  const { filteredCodes } = useFilteredData()
+  const { loadStats } = useAdminSimple()
+  const queryClient = useQueryClient()
   const { actions: batchActions } = useAdminBatchActions()
   const { ensureCsrfToken, resetCsrfToken } = useAdminCsrfToken()
   const quota = useAdminQuota()
@@ -84,37 +85,42 @@ export const useCodesViewModel = (): CodesViewModel => {
     void quota.refresh()
   }, [quota.refresh])
 
+  // Query codes directly via React Query
+  const codesQueryKey = useMemo(
+    () => ['admin', 'codes', state.codesPage, state.codesPageSize, state.filterStatus, debouncedSearchTerm] as const,
+    [state.codesPage, state.codesPageSize, state.filterStatus, debouncedSearchTerm],
+  )
+
+  const codesQuery = useQuery({
+    queryKey: codesQueryKey,
+    enabled: state.authenticated === true,
+    // v5: keepPreviousData removed
+    queryFn: () =>
+      fetchCodes({
+        page: state.codesPage,
+        page_size: state.codesPageSize,
+        status: state.filterStatus,
+        search: debouncedSearchTerm,
+      }).then((res) => {
+        if (!('ok' in res) || !res.ok) {
+          throw new Error(res.error || '加载兑换码数据失败')
+        }
+        return res.data ?? { items: [], pagination: {} }
+      }),
+  })
+
+  const codes = useMemo(() => (Array.isArray(codesQuery.data?.items) ? codesQuery.data!.items : []), [codesQuery.data])
+  const codesTotal = useMemo(() => codesQuery.data?.pagination?.total ?? codes.length, [codesQuery.data, codes.length])
+
   useEffect(() => {
-    setSelectedCodes((prev) => prev.filter((id) => filteredCodes.some((code) => code.id === id)))
-  }, [filteredCodes])
+    setSelectedCodes((prev) => prev.filter((id) => codes.some((code) => code.id === id)))
+  }, [codes])
 
   const refreshCodes = useCallback(() => {
-    void loadCodes({
-      page: state.codesPage,
-      pageSize: state.codesPageSize,
-      status: state.filterStatus,
-      search: state.searchTerm,
-    })
-  }, [loadCodes, state.codesPage, state.codesPageSize, state.filterStatus, state.searchTerm])
+    queryClient.invalidateQueries({ queryKey: codesQueryKey })
+  }, [queryClient, codesQueryKey])
 
-  useEffect(() => {
-    if (state.authenticated !== true) return
-    void loadCodes({
-      page: state.codesPage,
-      pageSize: state.codesPageSize,
-      status: state.filterStatus,
-      search: debouncedSearchTerm,
-    })
-  }, [
-    debouncedSearchTerm,
-    loadCodes,
-    state.authenticated,
-    state.codesPage,
-    state.codesPageSize,
-    state.filterStatus,
-  ])
-
-  useAdminAutoRefresh(refreshCodes, state.authenticated === true)
+  useAdminAutoRefresh(() => codesQuery.refetch(), state.authenticated === true)
 
   const handleCopyDetails = useCallback(
     async (code: CodeData) => {
@@ -278,17 +284,16 @@ export const useCodesViewModel = (): CodesViewModel => {
   const toggleSelectAllCodes = useCallback(
     (next: boolean) => {
       if (next) {
-        const allIds = filteredCodes.map((code) => code.id)
+        const allIds = codes.map((code) => code.id)
         setSelectedCodes(allIds)
       } else {
         setSelectedCodes([])
       }
     },
-    [filteredCodes],
+    [codes],
   )
 
-  const allCodesSelected =
-    filteredCodes.length > 0 && filteredCodes.every((code) => selectedCodes.includes(code.id))
+  const allCodesSelected = codes.length > 0 && codes.every((code) => selectedCodes.includes(code.id))
 
   const remainingQuota = useMemo(() => {
     if (quota.quota?.remaining_quota !== undefined) {
@@ -453,14 +458,9 @@ export const useCodesViewModel = (): CodesViewModel => {
     (page: number) => {
       const next = Math.max(1, page)
       setCodesPage(next)
-      void loadCodes({
-        page: next,
-        pageSize: state.codesPageSize,
-        status: state.filterStatus,
-        search: state.searchTerm,
-      })
+      refreshCodes()
     },
-    [loadCodes, setCodesPage, state.codesPageSize, state.filterStatus, state.searchTerm],
+    [refreshCodes, setCodesPage, state.codesPageSize],
   )
 
   const handlePageSizeChange = useCallback(
@@ -468,14 +468,9 @@ export const useCodesViewModel = (): CodesViewModel => {
       const nextSize = Math.max(1, Math.min(pageSize, 200))
       setCodesPageSize(nextSize)
       setCodesPage(1)
-      void loadCodes({
-        page: 1,
-        pageSize: nextSize,
-        status: state.filterStatus,
-        search: state.searchTerm,
-      })
+      refreshCodes()
     },
-    [loadCodes, setCodesPage, setCodesPageSize, state.filterStatus, state.searchTerm],
+    [refreshCodes, setCodesPage, setCodesPageSize],
   )
 
   const codeTableColumns = useMemo<CodeTableColumn[]>(
@@ -492,8 +487,8 @@ export const useCodesViewModel = (): CodesViewModel => {
   )
 
   return {
-    codesLoading: state.codesLoading,
-    filteredCodes,
+    codesLoading: codesQuery.isFetching,
+    filteredCodes: codes,
     codeTableColumns,
     containerHeight,
     itemHeight,
@@ -523,7 +518,7 @@ export const useCodesViewModel = (): CodesViewModel => {
     downloadGeneratedCodes,
     codesPage: state.codesPage,
     codesPageSize: state.codesPageSize,
-    codesTotal: state.codesTotal,
+    codesTotal,
     handlePageChange,
     handlePageSizeChange,
     allCodesSelected,

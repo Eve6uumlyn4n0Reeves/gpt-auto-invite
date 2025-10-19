@@ -19,7 +19,7 @@
 - 开发
   - 后端：`uvicorn app.main:app --reload --port 8000`
   - 前端：在 `cloud/web` 运行 `pnpm install && pnpm dev`（或使用 `scripts/start-dev.sh`）
-  - 前端需设置 `BACKEND_URL`（默认 `http://localhost:8000`）。
+  - 前端需设置 `BACKEND_URL`（默认 `http://localhost:8000`）。浏览器侧请求统一使用相对路径 `/api/*`，由 Nginx 转发至后端；不再使用 Next.js 的 `/app/api/admin/*` 代理路由。
 - 生产
   - `docker-compose up -d`（参见 `cloud/docker-compose.yml`）。
 

@@ -29,6 +29,8 @@ class Settings:
     seat_claim_backoff_ms_max: int = int(os.getenv("SEAT_CLAIM_BACKOFF_MS_MAX", "200"))
 
     extra_password: Optional[str] = os.getenv("EXTRA_PASSWORD")
+    # 可选：备用口令哈希（bcrypt），优先于明文 EXTRA_PASSWORD
+    extra_password_hash: Optional[str] = os.getenv("EXTRA_PASSWORD_HASH")
     extra_password_start_at_raw: Optional[str] = os.getenv("EXTRA_PASSWORD_START_AT")
 
     max_login_attempts: int = int(os.getenv("MAX_LOGIN_ATTEMPTS", "5"))

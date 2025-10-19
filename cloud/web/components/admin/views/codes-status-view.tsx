@@ -1,13 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CodesStatusSection, type CodeStatusTableColumn } from '@/components/admin/sections/codes-status-section'
 import { useAdminContext, useAdminActions, type CodeData } from '@/store/admin-context'
-import { useAdminSimple } from '@/hooks/use-admin-simple'
-import { useFilteredData } from '@/hooks/use-filtered-data'
 import { useNotifications } from '@/components/notification-system'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useAdminAutoRefresh } from '@/hooks/use-admin-auto-refresh'
+import { fetchCodes } from '@/lib/api/codes'
 
 export function CodesStatusView() {
   const { state } = useAdminContext()
@@ -20,41 +20,71 @@ export function CodesStatusView() {
     setCodesPage,
     setCodesPageSize,
   } = useAdminActions()
-  const { loadCodes } = useAdminSimple()
-  const { filteredCodesStatus, uniqueMothers, uniqueTeams, uniqueBatches } = useFilteredData()
+  const queryClient = useQueryClient()
   const notifications = useNotifications()
   const debouncedSearchTerm = useDebouncedValue(state.searchTerm, 300)
 
   const containerHeight = 420
   const itemHeight = 60
 
+  const codesQueryKey = useMemo(
+    () => ['admin', 'codes', state.codesPage, state.codesPageSize, state.filterStatus, debouncedSearchTerm] as const,
+    [state.codesPage, state.codesPageSize, state.filterStatus, debouncedSearchTerm],
+  )
+
+  const codesQuery = useQuery({
+    queryKey: codesQueryKey,
+    enabled: state.authenticated === true,
+    // React Query v5 removed keepPreviousData; we rely on caching by key
+    queryFn: () =>
+      fetchCodes({
+        page: state.codesPage,
+        page_size: state.codesPageSize,
+        status: state.filterStatus,
+        search: debouncedSearchTerm,
+      }).then((res) => {
+        if (!('ok' in res) || !res.ok) {
+          throw new Error(res.error || '加载兑换码数据失败')
+        }
+        return res.data ?? { items: [], pagination: {} }
+      }),
+  })
+
+  const baseCodes = useMemo(() => (Array.isArray(codesQuery.data?.items) ? codesQuery.data!.items : []), [codesQuery.data])
+  const codesTotal = useMemo(() => codesQuery.data?.pagination?.total ?? baseCodes.length, [codesQuery.data, baseCodes.length])
+
+  const uniqueMothers = useMemo(() => {
+    const s = new Set<string>()
+    baseCodes.forEach((c) => c.mother_name && s.add(c.mother_name))
+    return Array.from(s)
+  }, [baseCodes])
+
+  const uniqueTeams = useMemo(() => {
+    const s = new Set<string>()
+    baseCodes.forEach((c) => (c.team_name || c.team_id) && s.add(c.team_name || (c.team_id as string)))
+    return Array.from(s)
+  }, [baseCodes])
+
+  const uniqueBatches = useMemo(() => {
+    const s = new Set<string>()
+    baseCodes.forEach((c) => c.batch_id && s.add(c.batch_id))
+    return Array.from(s)
+  }, [baseCodes])
+
+  const filteredCodesStatus = useMemo(() => {
+    return baseCodes.filter((c) => {
+      const motherOk = !state.codesStatusMother || c.mother_name === state.codesStatusMother
+      const teamOk = !state.codesStatusTeam || c.team_name === state.codesStatusTeam || c.team_id === state.codesStatusTeam
+      const batchOk = !state.codesStatusBatch || c.batch_id === state.codesStatusBatch
+      return motherOk && teamOk && batchOk
+    })
+  }, [baseCodes, state.codesStatusMother, state.codesStatusTeam, state.codesStatusBatch])
+
   const refreshCodes = useCallback(() => {
-    void loadCodes({
-      page: state.codesPage,
-      pageSize: state.codesPageSize,
-      status: state.filterStatus,
-      search: state.searchTerm,
-    })
-  }, [loadCodes, state.codesPage, state.codesPageSize, state.filterStatus, state.searchTerm])
+    queryClient.invalidateQueries({ queryKey: codesQueryKey })
+  }, [queryClient, codesQueryKey])
 
-  useEffect(() => {
-    if (state.authenticated !== true) return
-    void loadCodes({
-      page: state.codesPage,
-      pageSize: state.codesPageSize,
-      status: state.filterStatus,
-      search: debouncedSearchTerm,
-    })
-  }, [
-    debouncedSearchTerm,
-    loadCodes,
-    state.authenticated,
-    state.codesPage,
-    state.codesPageSize,
-    state.filterStatus,
-  ])
-
-  useAdminAutoRefresh(refreshCodes, state.authenticated === true)
+  useAdminAutoRefresh(() => codesQuery.refetch(), state.authenticated === true)
 
   const handleCopyDetails = useCallback(
     async (code: CodeData) => {
@@ -144,7 +174,7 @@ export function CodesStatusView() {
 
   return (
     <CodesStatusSection
-      loading={state.codesLoading}
+      loading={codesQuery.isFetching}
       filterStatus={state.filterStatus}
       onFilterStatusChange={setFilterStatus}
       codesStatusMother={state.codesStatusMother}
@@ -165,28 +195,18 @@ export function CodesStatusView() {
       onRowAction={handleCopyDetails}
       page={state.codesPage}
       pageSize={state.codesPageSize}
-      total={state.codesTotal}
+      total={codesTotal}
       onRefresh={refreshCodes}
       onPageChange={(page) => {
         const next = Math.max(1, page)
         setCodesPage(next)
-        void loadCodes({
-          page: next,
-          pageSize: state.codesPageSize,
-          status: state.filterStatus,
-          search: state.searchTerm,
-        })
+        refreshCodes()
       }}
       onPageSizeChange={(pageSize) => {
         const nextSize = Math.max(1, Math.min(pageSize, 200))
         setCodesPageSize(nextSize)
         setCodesPage(1)
-        void loadCodes({
-          page: 1,
-          pageSize: nextSize,
-          status: state.filterStatus,
-          search: state.searchTerm,
-        })
+        refreshCodes()
       }}
     />
   )
