@@ -46,6 +46,15 @@ export const AdminHeader: React.FC = () => {
     }
   }
 
+  const dbUsersOk = state.serviceStatus.db?.users?.ok
+  const dbPoolOk = state.serviceStatus.db?.pool?.ok
+  const usersTitle = state.serviceStatus.db?.users
+    ? `users: ${state.serviceStatus.db.users.dialect || ''} ${state.serviceStatus.db.users.alembic_version || ''} @ ${state.serviceStatus.db.users.url || ''}`
+    : 'users: 未知'
+  const poolTitle = state.serviceStatus.db?.pool
+    ? `pool: ${state.serviceStatus.db.pool.dialect || ''} ${state.serviceStatus.db.pool.alembic_version || ''} @ ${state.serviceStatus.db.pool.url || ''}`
+    : 'pool: 未知'
+
   const navItems = [
     { href: ADMIN_TAB_ROUTES.overview, label: '数据总览' },
     { href: ADMIN_TAB_ROUTES.mothers, label: '母号管理' },
@@ -85,6 +94,15 @@ export const AdminHeader: React.FC = () => {
                   })}
                 </span>
               )}
+            </div>
+
+            <div className="flex items-center gap-2 rounded-full border border-border/40 bg-background/50 px-3 py-2" title={usersTitle}>
+              <div className={`h-2 w-2 rounded-full ${dbUsersOk === true ? 'bg-green-500' : dbUsersOk === false ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'}`} />
+              <span className="text-xs text-muted-foreground">Users DB</span>
+            </div>
+            <div className="flex items-center gap-2 rounded-full border border-border/40 bg-background/50 px-3 py-2" title={poolTitle}>
+              <div className={`h-2 w-2 rounded-full ${dbPoolOk === true ? 'bg-green-500' : dbPoolOk === false ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'}`} />
+              <span className="text-xs text-muted-foreground">Pool DB</span>
             </div>
 
             <div className="flex items-center gap-2 rounded-full border border-border/40 bg-background/50 px-3 py-2">

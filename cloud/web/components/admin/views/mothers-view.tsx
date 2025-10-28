@@ -4,20 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MothersSection } from '@/components/admin/sections/mothers-section'
 import { MotherFormDialog, getEmptyMotherFormState, type MotherFormState } from '@/components/admin/forms/mother-form-dialog'
 import { PaginationControls } from '@/components/admin/pagination-controls'
-import { useAdminContext, useAdminActions, type MotherAccount } from '@/store/admin-context'
-import { useAdminSimple } from '@/hooks/use-admin-simple'
+import type { PoolMotherAccount } from '@/store/pool/types'
+import { usePoolContext } from '@/store/pool/context'
+import { usePoolMothers } from '@/hooks/use-pool-mothers'
 import { useAdminCsrfToken } from '@/hooks/use-admin-csrf-token'
 import { useNotifications } from '@/components/notification-system'
-import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useAdminAutoRefresh } from '@/hooks/use-admin-auto-refresh'
 
 export function MothersView() {
-  const { state } = useAdminContext()
-  const { setMothersPage, setMothersPageSize } = useAdminActions()
-  const { loadMothers, loadStats } = useAdminSimple()
+  const { state } = usePoolContext()
+  const { loadMothers } = usePoolMothers()
   const { ensureCsrfToken, resetCsrfToken } = useAdminCsrfToken()
   const notifications = useNotifications()
-  const debouncedSearchTerm = useDebouncedValue(state.searchTerm, 300)
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
@@ -25,7 +23,7 @@ export function MothersView() {
   const [editLoading, setEditLoading] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [motherForm, setMotherForm] = useState<MotherFormState>(getEmptyMotherFormState)
-  const [editingMother, setEditingMother] = useState<MotherAccount | null>(null)
+  const [editingMother, setEditingMother] = useState<PoolMotherAccount | null>(null)
 
   const buildMotherPayload = useCallback((form: MotherFormState) => {
     const baseTeams = form.teams
@@ -54,26 +52,14 @@ export function MothersView() {
     void loadMothers({
       page: state.mothersPage,
       pageSize: state.mothersPageSize,
-      search: state.searchTerm,
     })
-  }, [loadMothers, state.mothersPage, state.mothersPageSize, state.searchTerm])
+  }, [loadMothers, state.mothersPage, state.mothersPageSize])
 
   useEffect(() => {
-    if (state.authenticated !== true) return
-    void loadMothers({
-      page: state.mothersPage,
-      pageSize: state.mothersPageSize,
-      search: debouncedSearchTerm,
-    })
-  }, [
-    debouncedSearchTerm,
-    loadMothers,
-    state.authenticated,
-    state.mothersPage,
-    state.mothersPageSize,
-  ])
+    void loadMothers({ page: state.mothersPage, pageSize: state.mothersPageSize })
+  }, [loadMothers, state.mothersPage, state.mothersPageSize])
 
-  useAdminAutoRefresh(refreshMothers, state.authenticated === true)
+  useAdminAutoRefresh(refreshMothers, true)
 
   const handleRefresh = useCallback(() => {
     refreshMothers()
@@ -99,6 +85,7 @@ export function MothersView() {
             'Content-Type': 'application/json',
             'X-CSRF-Token': token,
             'X-Request-Source': 'nextjs-frontend',
+            'X-Domain': 'pool',
           },
           body: JSON.stringify(payload),
         })
@@ -117,7 +104,6 @@ export function MothersView() {
         setCreateDialogOpen(false)
         setMotherForm(getEmptyMotherFormState())
         await loadMothers({ page: state.mothersPage, pageSize: state.mothersPageSize })
-        loadStats()
       } catch (error) {
         const message = error instanceof Error ? error.message : '创建母号失败'
         setFormError(message)
@@ -135,7 +121,6 @@ export function MothersView() {
       buildMotherPayload,
       ensureCsrfToken,
       loadMothers,
-      loadStats,
       notifications,
       resetCsrfToken,
       state.mothersPage,
@@ -160,6 +145,7 @@ export function MothersView() {
             'Content-Type': 'application/json',
             'X-CSRF-Token': token,
             'X-Request-Source': 'nextjs-frontend',
+            'X-Domain': 'pool',
           },
           body: JSON.stringify(payload),
         })
@@ -178,7 +164,6 @@ export function MothersView() {
         setEditDialogOpen(false)
         setEditingMother(null)
         await loadMothers({ page: state.mothersPage, pageSize: state.mothersPageSize })
-        loadStats()
       } catch (error) {
         const message = error instanceof Error ? error.message : '更新母号失败'
         setFormError(message)
@@ -196,7 +181,6 @@ export function MothersView() {
       buildMotherPayload,
       ensureCsrfToken,
       loadMothers,
-      loadStats,
       notifications,
       resetCsrfToken,
       state.mothersPage,
@@ -213,6 +197,7 @@ export function MothersView() {
           headers: {
             'X-CSRF-Token': token,
             'X-Request-Source': 'nextjs-frontend',
+            'X-Domain': 'pool',
           },
         })
 
@@ -275,7 +260,7 @@ export function MothersView() {
     setCreateDialogOpen(true)
   }, [])
 
-  const handleEditDialogOpen = useCallback((mother: MotherAccount) => {
+  const handleEditDialogOpen = useCallback((mother: PoolMotherAccount) => {
     setEditingMother(mother)
     setFormError(null)
     setMotherForm({
@@ -301,28 +286,18 @@ export function MothersView() {
   const handlePageChange = useCallback(
     (page: number) => {
       const nextPage = Math.max(1, page)
-      setMothersPage(nextPage)
-      void loadMothers({
-        page: nextPage,
-        pageSize: state.mothersPageSize,
-        search: state.searchTerm,
-      })
+      // 直接触发加载（分页状态由 Pool store 内部保存）
+      void loadMothers({ page: nextPage, pageSize: state.mothersPageSize })
     },
-    [loadMothers, setMothersPage, state.mothersPageSize, state.searchTerm],
+    [loadMothers, state.mothersPageSize],
   )
 
   const handlePageSizeChange = useCallback(
     (pageSize: number) => {
       const nextPageSize = Math.max(1, Math.min(pageSize, 200))
-      setMothersPageSize(nextPageSize)
-      setMothersPage(1)
-      void loadMothers({
-        page: 1,
-        pageSize: nextPageSize,
-        search: state.searchTerm,
-      })
+      void loadMothers({ page: 1, pageSize: nextPageSize })
     },
-    [loadMothers, setMothersPage, setMothersPageSize, state.searchTerm],
+    [loadMothers],
   )
 
   const motherFormUpdater = useCallback(

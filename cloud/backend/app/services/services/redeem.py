@@ -6,6 +6,7 @@ from sqlalchemy import update, select
 from datetime import datetime
 from app import models
 from app.services.services.invites import InviteService
+from app.repositories import PoolRepository, UsersRepository
 
 
 def hash_code(code: str) -> str:
@@ -104,7 +105,9 @@ def redeem_code(
 
     # Invite
     try:
-        svc = InviteService(db)
+        users_repo = UsersRepository(db)
+        pool_repo = PoolRepository(db)
+        svc = InviteService(users_repo, pool_repo)
         ok, msg, invite_id, mother_id, team_id = svc.invite_email(email, row)
 
         # Redundant safeguard for success

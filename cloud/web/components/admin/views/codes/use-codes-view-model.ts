@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAdminContext, useAdminActions, type CodeData } from '@/store/admin-context'
+import { useUsersContext, useUsersActions } from '@/store/users/context'
 import { useAdminSimple } from '@/hooks/use-admin-simple'
 import { fetchCodes } from '@/lib/api/codes'
 import { useAdminBatchActions } from '@/hooks/use-admin-batch-actions'
 import { useAdminCsrfToken } from '@/hooks/use-admin-csrf-token'
 import { useAdminQuota } from '@/hooks/use-admin-quota'
 import { useNotifications } from '@/components/notification-system'
+import { useSuccessFlow } from '@/hooks/use-success-flow'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useAdminAutoRefresh } from '@/hooks/use-admin-auto-refresh'
 import type { CodeTableColumn } from '@/components/admin/sections/codes-section'
@@ -56,10 +58,9 @@ interface CodesViewModel {
 }
 
 export const useCodesViewModel = (): CodesViewModel => {
-  const { state } = useAdminContext()
+  const { state } = useUsersContext()
+  const usersActions = useUsersActions()
   const {
-    setCodesPage,
-    setCodesPageSize,
     setCodeCount,
     setCodePrefix,
     setGeneratedCodes,
@@ -72,6 +73,7 @@ export const useCodesViewModel = (): CodesViewModel => {
   const { ensureCsrfToken, resetCsrfToken } = useAdminCsrfToken()
   const quota = useAdminQuota()
   const notifications = useNotifications()
+  const { succeed } = useSuccessFlow()
   const debouncedSearchTerm = useDebouncedValue(state.searchTerm, 300)
 
   const [selectedCodes, setSelectedCodes] = useState<number[]>([])
@@ -93,7 +95,7 @@ export const useCodesViewModel = (): CodesViewModel => {
 
   const codesQuery = useQuery({
     queryKey: codesQueryKey,
-    enabled: state.authenticated === true,
+    enabled: true,
     // v5: keepPreviousData removed
     queryFn: () =>
       fetchCodes({
@@ -186,6 +188,7 @@ export const useCodesViewModel = (): CodesViewModel => {
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': token,
+          'X-Domain': 'users',
           'X-Request-Source': 'nextjs-frontend',
         },
         body: JSON.stringify({
@@ -233,12 +236,13 @@ export const useCodesViewModel = (): CodesViewModel => {
     async (code: CodeData) => {
       try {
         const token = await ensureCsrfToken()
-        const response = await fetch(`/api/admin/codes/${code.id}/disable`, {
-          method: 'POST',
-          headers: {
-            'X-CSRF-Token': token,
-            'X-Request-Source': 'nextjs-frontend',
-          },
+      const response = await fetch(`/api/admin/codes/${code.id}/disable`, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': token,
+          'X-Domain': 'users',
+          'X-Request-Source': 'nextjs-frontend',
+        },
         })
         const data = await response.json().catch(() => ({}))
         if (!response.ok || data?.success === false) {
@@ -361,48 +365,38 @@ export const useCodesViewModel = (): CodesViewModel => {
     }
 
     setGenerateLoading(true)
-    try {
-      const token = await ensureCsrfToken()
-      const response = await fetch('/api/admin/codes', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': token,
-          'X-Request-Source': 'nextjs-frontend',
-        },
-        body: JSON.stringify({
-          count: state.codeCount,
-          prefix: state.codePrefix || undefined,
-        }),
-      })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(data?.message || data?.detail || '生成兑换码失败')
-      }
-
-      const codes = Array.isArray(data?.codes) ? data.codes : []
-      setGeneratedCodes(codes)
-      setShowGenerated(true)
-      notifications.addNotification({
-        type: 'success',
-        title: '兑换码已生成',
-        message: `成功生成 ${codes.length} 个兑换码`,
-      })
-      refreshCodes()
-      loadStats()
-      void quota.refresh()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '生成兑换码失败'
-      notifications.addNotification({
-        type: 'error',
-        title: '生成失败',
-        message,
-      })
-    } finally {
-      setGenerateLoading(false)
-      resetCsrfToken()
-    }
+    await succeed(
+      async () => {
+        const token = await ensureCsrfToken()
+        const response = await fetch('/api/admin/codes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': token,
+            'X-Domain': 'users',
+            'X-Request-Source': 'nextjs-frontend',
+          },
+          body: JSON.stringify({
+            count: state.codeCount,
+            prefix: state.codePrefix || undefined,
+          }),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data?.message || data?.detail || '生成兑换码失败')
+        return data
+      },
+      (data: any) => {
+        const codes = Array.isArray(data?.codes) ? data.codes : []
+        setGeneratedCodes(codes)
+        setShowGenerated(true)
+        refreshCodes()
+        loadStats()
+        void quota.refresh()
+        return { title: '兑换码已生成', message: `成功生成 ${codes.length} 个兑换码` }
+      },
+    )
+    setGenerateLoading(false)
+    resetCsrfToken()
   }, [
     ensureCsrfToken,
     loadStats,
@@ -457,20 +451,20 @@ export const useCodesViewModel = (): CodesViewModel => {
   const handlePageChange = useCallback(
     (page: number) => {
       const next = Math.max(1, page)
-      setCodesPage(next)
+      usersActions.setCodesPage(next)
       refreshCodes()
     },
-    [refreshCodes, setCodesPage, state.codesPageSize],
+    [refreshCodes, usersActions, state.codesPageSize],
   )
 
   const handlePageSizeChange = useCallback(
     (pageSize: number) => {
       const nextSize = Math.max(1, Math.min(pageSize, 200))
-      setCodesPageSize(nextSize)
-      setCodesPage(1)
+      usersActions.setCodesPageSize(nextSize)
+      usersActions.setCodesPage(1)
       refreshCodes()
     },
-    [refreshCodes, setCodesPage, setCodesPageSize],
+    [refreshCodes, usersActions],
   )
 
   const codeTableColumns = useMemo<CodeTableColumn[]>(

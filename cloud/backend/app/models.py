@@ -13,7 +13,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
-from app.database import Base
+from app.database import BaseUsers, BasePool
 
 class MotherStatus(str, enum.Enum):
     active = "active"
@@ -38,7 +38,85 @@ class CodeStatus(str, enum.Enum):
     expired = "expired"
     blocked = "blocked"
 
-class MotherAccount(Base):
+class MotherGroup(BasePool):
+    __tablename__ = "mother_groups"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    team_name_template = Column(String(200), nullable=True)  # Team名称模板
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # 关系
+    mothers = relationship("MotherAccount", back_populates="group")
+
+
+class PoolGroup(BasePool):
+    __tablename__ = "pool_groups"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PoolGroupSettings(BasePool):
+    __tablename__ = "pool_group_settings"
+
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, ForeignKey("pool_groups.id", ondelete="CASCADE"), nullable=False, unique=True)
+    team_template = Column(String(200), nullable=True)  # e.g. {group}-{date}-{seq3}
+    child_name_template = Column(String(200), nullable=True)  # e.g. {group}-{date}-{seq3}
+    child_email_template = Column(String(200), nullable=True)  # e.g. {group}-{date}-{seq3}@{domain}
+    email_domain = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class GroupDailySequence(BasePool):
+    __tablename__ = "group_daily_sequences"
+
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, ForeignKey("pool_groups.id", ondelete="CASCADE"), nullable=False)
+    seq_type = Column(String(16), nullable=False)  # 'team' | 'child'
+    date_yyyymmdd = Column(String(8), nullable=False)
+    current_value = Column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "seq_type", "date_yyyymmdd", name="uq_group_seq_date"),
+        Index("ix_group_seq", "group_id", "seq_type", "date_yyyymmdd"),
+    )
+
+class ChildAccount(BasePool):
+    __tablename__ = "child_accounts"
+
+    id = Column(Integer, primary_key=True)
+    child_id = Column(String(100), nullable=False, unique=True)  # 子号ID
+    name = Column(String(200), nullable=False)  # 子号名称
+    email = Column(String(255), nullable=False)  # 子号邮箱
+    mother_id = Column(Integer, ForeignKey("mother_accounts.id"), nullable=False)
+    team_id = Column(String(100), nullable=False)  # 承接的team_id
+    team_name = Column(String(200), nullable=False)  # Team名称
+    status = Column(String(50), default="active", nullable=False)  # active/inactive/suspended
+    access_token_enc = Column(Text, nullable=True)  # 子号的access token
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    member_id = Column(String(128), nullable=True)
+
+    # 关系
+    mother = relationship("MotherAccount", back_populates="children")
+
+    __table_args__ = (
+        UniqueConstraint("mother_id", "team_id", "email", name="uq_child_one_team"),
+        Index("ix_child_mother", "mother_id"),
+    )
+
+class MotherAccount(BasePool):
     __tablename__ = "mother_accounts"
     
     id = Column(Integer, primary_key=True)
@@ -48,12 +126,17 @@ class MotherAccount(Base):
     status = Column(Enum(MotherStatus), default=MotherStatus.active, nullable=False)
     seat_limit = Column(Integer, default=7, nullable=False)
     notes = Column(Text, nullable=True)
+    group_id = Column(Integer, ForeignKey("mother_groups.id"), nullable=True)
+    pool_group_id = Column(Integer, ForeignKey("pool_groups.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    teams = relationship("MotherTeam", back_populates="mother", cascade="all, delete-orphan")
 
-class MotherTeam(Base):
+    # 关系
+    group = relationship("MotherGroup", back_populates="mothers")
+    teams = relationship("MotherTeam", back_populates="mother", cascade="all, delete-orphan")
+    children = relationship("ChildAccount", back_populates="mother", cascade="all, delete-orphan")
+
+class MotherTeam(BasePool):
     __tablename__ = "mother_teams"
     
     id = Column(Integer, primary_key=True)
@@ -71,7 +154,7 @@ class MotherTeam(Base):
         Index("ix_team_enabled", "team_id", "is_enabled"),
     )
 
-class SeatAllocation(Base):
+class SeatAllocation(BasePool):
     __tablename__ = "seats"
     
     id = Column(Integer, primary_key=True)
@@ -81,7 +164,8 @@ class SeatAllocation(Base):
     email = Column(String(320), nullable=True)
     status = Column(Enum(SeatStatus), default=SeatStatus.free, nullable=False)
     held_until = Column(DateTime, nullable=True)
-    invite_request_id = Column(Integer, ForeignKey("invite_requests.id", ondelete="SET NULL"), nullable=True)
+    # 跨库字段：在物理分库下不建立 DB 级外键，仅保留引用 ID
+    invite_request_id = Column(Integer, nullable=True)
     invite_id = Column(String(128), nullable=True)
     member_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -94,11 +178,12 @@ class SeatAllocation(Base):
         Index("ix_seat_status", "status"),
     )
 
-class InviteRequest(Base):
+class InviteRequest(BaseUsers):
     __tablename__ = "invite_requests"
     
     id = Column(Integer, primary_key=True)
-    mother_id = Column(Integer, ForeignKey("mother_accounts.id", ondelete="SET NULL"), nullable=True)
+    # 跨库字段（Pool→Users）：不建立外键
+    mother_id = Column(Integer, nullable=True)
     team_id = Column(String(64), nullable=False)
     email = Column(String(320), nullable=False)
     code_id = Column(Integer, ForeignKey("redeem_codes.id", ondelete="SET NULL"), nullable=True)
@@ -117,7 +202,7 @@ class InviteRequest(Base):
         Index("ix_invite_status", "status"),
     )
 
-class RedeemCode(Base):
+class RedeemCode(BaseUsers):
     __tablename__ = "redeem_codes"
     
     id = Column(Integer, primary_key=True)
@@ -125,7 +210,8 @@ class RedeemCode(Base):
     batch_id = Column(String(64), nullable=True)
     status = Column(Enum(CodeStatus), default=CodeStatus.unused, nullable=False)
     used_by_email = Column(String(320), nullable=True)
-    used_by_mother_id = Column(Integer, ForeignKey("mother_accounts.id", ondelete="SET NULL"), nullable=True)
+    # 跨库字段：不建立外键
+    used_by_mother_id = Column(Integer, nullable=True)
     used_by_team_id = Column(String(64), nullable=True)
     used_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
@@ -152,7 +238,7 @@ class RedeemCode(Base):
         # Align with places that previously used updated_at to indicate usage time
         return self.used_at
 
-class AdminConfig(Base):
+class AdminConfig(BaseUsers):
     __tablename__ = "admin_config"
     
     id = Column(Integer, primary_key=True)
@@ -160,7 +246,7 @@ class AdminConfig(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-class AdminSession(Base):
+class AdminSession(BaseUsers):
     __tablename__ = "admin_sessions"
     
     id = Column(Integer, primary_key=True)
@@ -172,7 +258,7 @@ class AdminSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-class AuditLog(Base):
+class AuditLog(BaseUsers):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True)
@@ -191,7 +277,7 @@ class BulkOperationType(str, enum.Enum):
     code_generate = "code_generate"
     code_bulk_action = "code_bulk_action"
 
-class BulkOperationLog(Base):
+class BulkOperationLog(BaseUsers):
     __tablename__ = "bulk_operation_logs"
 
     id = Column(Integer, primary_key=True)
@@ -218,8 +304,9 @@ class BatchJobType(str, enum.Enum):
     users_cancel = "users_cancel"
     users_remove = "users_remove"
     codes_disable = "codes_disable"
+    pool_sync_mother = "pool_sync_mother"
 
-class BatchJob(Base):
+class BatchJob(BaseUsers):
     __tablename__ = "batch_jobs"
 
     id = Column(Integer, primary_key=True)

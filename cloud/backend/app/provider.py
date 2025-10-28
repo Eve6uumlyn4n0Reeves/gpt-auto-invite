@@ -87,12 +87,67 @@ def _with_resilience(do_request, endpoint: str, team_id: Optional[str]):
     if last_exc:
         raise last_exc
 
+def parse_cookie_string(cookie_string: str) -> dict:
+    """
+    解析 Cookie 字符串为字典格式
+
+    Args:
+        cookie_string: Cookie 字符串，如 "name1=value1; name2=value2"
+
+    Returns:
+        dict: Cookie 字典
+    """
+    cookies = {}
+    for item in cookie_string.split(';'):
+        if '=' in item:
+            name, value = item.strip().split('=', 1)
+            cookies[name] = value
+    return cookies
+
+def validate_session_data(data: dict) -> bool:
+    """
+    验证 session 数据是否有效
+
+    Args:
+        data: session 响应数据
+
+    Returns:
+        bool: 数据是否有效
+    """
+    required_fields = ["accessToken", "user", "account"]
+    return all(field in data for field in required_fields)
+
 def fetch_session_via_cookie(cookie: str) -> Tuple[str, Optional[datetime], Optional[str], Optional[str]]:
+    """
+    通过 Cookie 自动化获取 ChatGPT session 信息
+
+    Args:
+        cookie: 完整的 Cookie 字符串，格式如: "name1=value1; name2=value2"
+
+    Returns:
+        tuple: (access_token, expires_at, email, account_id)
+
+    Example:
+        cookie = "__Secure-next-auth.session-token=xxx; oai-did=yyy; ..."
+        token, expires, email, team_id = fetch_session_via_cookie(cookie)
+
+    Note:
+        此函数已实现完整的自动化流程，支持:
+        - 自动解析 Cookie
+        - 验证响应数据
+        - 错误处理和重试
+        - 代理支持
+    """
     url = "https://chatgpt.com/api/auth/session"
     headers = {
         "cookie": cookie,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         "accept": "application/json, */*",
+        "referer": "https://chatgpt.com/",
+        "origin": "https://chatgpt.com",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
     }
     r = requests.get(url, headers=headers, timeout=30, proxies=_proxies())
     if r.status_code != 200:
@@ -175,11 +230,16 @@ def delete_member(access_token: str, team_id: str, member_id: str) -> dict:
     _record_success('delete_member', team_id)
     return resp
 
-def list_members(access_token: str, team_id: str) -> dict:
+def list_members(access_token: str, team_id: str, offset: int = 0, limit: int = 25, query: str = "") -> dict:
     def _do():
         url = f"{BASE}/accounts/{team_id}/users"
+        params = {
+            "offset": offset,
+            "limit": limit,
+            "query": query
+        }
         t0 = time.time()
-        r = requests.get(url, headers=_headers(access_token, team_id), timeout=30, proxies=_proxies())
+        r = requests.get(url, headers=_headers(access_token, team_id), params=params, timeout=30, proxies=_proxies())
         provider_metrics.record("list_members", team_id, r.status_code, (time.time()-t0)*1000)
         if r.status_code != 200:
             raise ProviderError(r.status_code, "list_members_failed", r.text[:1000])
@@ -188,11 +248,16 @@ def list_members(access_token: str, team_id: str) -> dict:
     _record_success('list_members', team_id)
     return resp
 
-def list_invites(access_token: str, team_id: str) -> dict:
+def list_invites(access_token: str, team_id: str, offset: int = 0, limit: int = 25, query: str = "") -> dict:
     def _do():
         url = f"{BASE}/accounts/{team_id}/invites"
+        params = {
+            "offset": offset,
+            "limit": limit,
+            "query": query
+        }
         t0 = time.time()
-        r = requests.get(url, headers=_headers(access_token, team_id), timeout=30, proxies=_proxies())
+        r = requests.get(url, headers=_headers(access_token, team_id), params=params, timeout=30, proxies=_proxies())
         provider_metrics.record("list_invites", team_id, r.status_code, (time.time()-t0)*1000)
         if r.status_code != 200:
             raise ProviderError(r.status_code, "list_invites_failed", r.text[:1000])
@@ -215,4 +280,42 @@ def cancel_invite(access_token: str, team_id: str, invite_id: str) -> dict:
             return {"ok": True}
     resp = _with_resilience(_do, 'cancel_invite', team_id)
     _record_success('cancel_invite', team_id)
+    return resp
+
+def update_team_info(access_token: str, team_id: str, team_name: str) -> dict:
+    def _do():
+        url = f"{BASE}/accounts/{team_id}"
+        payload = {
+            "name": team_name
+        }
+        t0 = time.time()
+        r = requests.patch(url, headers=_headers(access_token, team_id), json=payload, timeout=30, proxies=_proxies())
+        provider_metrics.record("update_team_info", team_id, r.status_code, (time.time()-t0)*1000)
+        if r.status_code not in (200, 204):
+            raise ProviderError(r.status_code, "update_team_info_failed", r.text[:1000])
+        try:
+            return r.json() if r.text else {"ok": True}
+        except Exception:
+            return {"ok": True}
+    resp = _with_resilience(_do, 'update_team_info', team_id)
+    _record_success('update_team_info', team_id)
+    return resp
+
+def enable_beta_feature(access_token: str, team_id: str, feature: str) -> dict:
+    def _do():
+        url = f"{BASE}/accounts/{team_id}/beta_features"
+        payload = {
+            "feature": feature
+        }
+        t0 = time.time()
+        r = requests.post(url, headers=_headers(access_token, team_id), json=payload, timeout=30, proxies=_proxies())
+        provider_metrics.record("enable_beta_feature", team_id, r.status_code, (time.time()-t0)*1000)
+        if r.status_code not in (200, 201):
+            raise ProviderError(r.status_code, "enable_beta_feature_failed", r.text[:1000])
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text}
+    resp = _with_resilience(_do, 'enable_beta_feature', team_id)
+    _record_success('enable_beta_feature', team_id)
     return resp

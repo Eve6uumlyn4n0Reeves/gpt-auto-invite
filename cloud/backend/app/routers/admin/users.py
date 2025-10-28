@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.utils.performance import monitor_session_queries
 
-from .dependencies import get_db, require_admin
+from .dependencies import get_db, require_admin, require_domain
 
 router = APIRouter()
 
@@ -26,6 +26,17 @@ def list_users(
 ):
     """用户列表接口 - 支持分页并优化 N+1 查询"""
     require_admin(request, db)
+    # Users 域接口：生产环境强制要求 X-Domain=users
+    import asyncio
+    if hasattr(asyncio, 'create_task'):
+        # 以协程形式复用 require_domain 实现
+        # FastAPI 同步函数中调用异步依赖：直接运行事件循环较重，这里简化为仅在 prod 同步检查 header
+        pass
+    domain = request.headers.get('X-Domain')
+    from app.config import settings as _s
+    if _s.env not in ("dev", "development", "test", "testing"):
+        if domain != 'users':
+            raise HTTPException(status_code=400, detail="X-Domain 不匹配，期望 users")
 
     with monitor_session_queries(db, "admin_list_users"):
         query = db.query(models.InviteRequest)

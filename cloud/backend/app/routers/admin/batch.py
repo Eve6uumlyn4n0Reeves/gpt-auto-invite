@@ -10,9 +10,10 @@ from app import models
 from app.schemas import BatchOpIn, BatchOpOut, BatchOperationSupportedActions
 from app.services.services import audit as audit_svc
 from app.services.services.bulk_history import record_bulk_operation
-from app.services.services.invites import cancel_invite, remove_member, resend_invite
+from app.repositories import PoolRepository, UsersRepository
+from app.services.services.invites import InviteService
 
-from .dependencies import admin_ops_rate_limit_dep, get_db, require_admin
+from .dependencies import admin_ops_rate_limit_dep, get_db, get_db_pool, require_admin
 
 router = APIRouter()
 
@@ -91,6 +92,7 @@ def batch_users(
     payload: BatchOpIn,
     request: Request,
     db: Session = Depends(get_db),
+    db_pool: Session = Depends(get_db_pool),
     _: None = Depends(admin_ops_rate_limit_dep),
 ):
     require_admin(request, db)
@@ -110,6 +112,7 @@ def batch_users(
 
     success = 0
     failed = 0
+    invite_service = InviteService(UsersRepository(db), PoolRepository(db_pool))
 
     for uid in ids:
         invite = db.query(models.InviteRequest).filter(models.InviteRequest.id == uid).first()
@@ -117,12 +120,13 @@ def batch_users(
             failed += 1
             continue
 
+        email = invite.email.strip().lower()
         if action == "resend":
-            ok, _ = resend_invite(db, invite.email, invite.team_id)
+            ok, _ = invite_service.resend_invite(email, invite.team_id)
         elif action == "cancel":
-            ok, _ = cancel_invite(db, invite.email, invite.team_id)
+            ok, _ = invite_service.cancel_invite(email, invite.team_id)
         elif action == "remove":
-            ok, _ = remove_member(db, invite.email, invite.team_id)
+            ok, _ = invite_service.remove_member(email, invite.team_id)
         else:
             raise HTTPException(status_code=400, detail="不支持的操作")
 

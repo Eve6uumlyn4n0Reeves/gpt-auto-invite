@@ -1,0 +1,38 @@
+name: Web CI
+
+on:
+  push:
+    paths:
+      - 'cloud/web/**'
+      - '.github/workflows/web-ci.yml'
+  pull_request:
+    paths:
+      - 'cloud/web/**'
+      - '.github/workflows/web-ci.yml'
+
+jobs:
+  domain-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: cloud/web/pnpm-lock.yaml
+      - name: Install deps
+        run: pnpm install --no-frozen-lockfile
+      - name: Domain separation check
+        run: pnpm run ci:domain-check
+      - name: Type check and build (smoke)
+        run: |
+          pnpm run build --no-lint

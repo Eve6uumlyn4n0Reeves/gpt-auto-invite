@@ -1,4 +1,4 @@
-import { adminRequest } from '@/lib/api/admin-client'
+import { usersAdminRequest } from '@/lib/api/admin-client'
 import type { AuditLog } from '@/store/admin-context'
 
 export interface AuditQueryParams {
@@ -23,5 +23,5 @@ export async function fetchAuditLogs(params: AuditQueryParams) {
   const query = search.toString()
   const endpoint = query ? `/audit-logs?${query}` : '/audit-logs'
 
-  return adminRequest<AuditResponse>(endpoint)
+  return usersAdminRequest<AuditResponse>(endpoint)
 }

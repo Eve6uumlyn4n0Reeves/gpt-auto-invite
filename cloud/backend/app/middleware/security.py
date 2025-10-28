@@ -8,6 +8,10 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from app.security import get_security_headers, generate_nonce
+try:
+    from app.metrics_prom import admin_api_requests_total
+except Exception:
+    admin_api_requests_total = None
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +25,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # 生成nonce用于此请求的CSP
         nonce = generate_nonce()
+        domain = request.headers.get("X-Domain")
 
         # 获取响应
         response = await call_next(request)
@@ -32,6 +37,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # 将nonce添加到响应状态，以便前端模板使用
         response.headers["X-CSP-Nonce"] = nonce
+        if domain:
+            response.headers["X-Domain-Ack"] = domain
+            try:
+                logger.debug("domain=%s path=%s", domain, request.url.path)
+            except Exception:
+                pass
+
+        # 指标：记录 Admin API 请求
+        try:
+            if admin_api_requests_total is not None:
+                path = request.url.path
+                method = request.method
+                status = str(getattr(response, 'status_code', 0))
+                dom = domain or 'unknown'
+                admin_api_requests_total.labels(path=path, method=method, domain=dom, status=status).inc()
+        except Exception:
+            pass
 
         return response
 

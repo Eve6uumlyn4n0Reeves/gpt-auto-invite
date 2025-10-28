@@ -19,7 +19,7 @@ from app.services.services.redeem import generate_codes
 from app.utils.csrf import require_csrf_token
 from app.utils.performance import monitor_session_queries
 
-from .dependencies import admin_ops_rate_limit_dep, get_db, require_admin
+from .dependencies import admin_ops_rate_limit_dep, get_db, require_admin, require_domain
 
 router = APIRouter()
 
@@ -32,6 +32,7 @@ async def generate_batch_codes(
     _: None = Depends(admin_ops_rate_limit_dep),
 ):
     require_admin(request, db)
+    await require_domain('users')(request)
     await require_csrf_token(request)
 
     now = datetime.utcnow()
@@ -68,7 +69,25 @@ async def generate_batch_codes(
         )
 
     batch_id, codes = generate_codes(db, payload.count, payload.prefix, payload.expires_at, payload.batch_id)
-    audit_svc.log(db, actor="admin", action="generate_codes", payload_redacted=f"count={payload.count}, batch={batch_id}")
+    
+    # 如果指定了用户组，将 group_id 存入所有码的 meta_json
+    if payload.mother_group_id:
+        import json
+        for code_hash in [__import__("hashlib").sha256(c.encode()).hexdigest() for c in codes]:
+            code_row = db.query(models.RedeemCode).filter(models.RedeemCode.code_hash == code_hash).first()
+            if code_row:
+                meta = {}
+                if code_row.meta_json:
+                    try:
+                        meta = json.loads(code_row.meta_json)
+                    except Exception:
+                        pass
+                meta["mother_group_id"] = payload.mother_group_id
+                code_row.meta_json = json.dumps(meta, ensure_ascii=False)
+                db.add(code_row)
+        db.commit()
+    
+    audit_svc.log(db, actor="admin", action="generate_codes", payload_redacted=f"count={payload.count}, batch={batch_id}, group={payload.mother_group_id or 'all'}")
     try:
         record_bulk_operation(
             db,
@@ -81,6 +100,7 @@ async def generate_batch_codes(
                 "batch_id": batch_id,
                 "prefix": payload.prefix,
                 "expires_at": payload.expires_at.isoformat() if payload.expires_at else None,
+                "mother_group_id": payload.mother_group_id,
                 "request_ip": request.client.host if request.client else None,
             },
         )
@@ -169,6 +189,7 @@ def list_codes(
     search: Optional[str] = Query(None),
 ):
     require_admin(request, db)
+    # 只读接口可不强制域，但建议前端仍传 X-Domain=users
 
     with monitor_session_queries(db, "admin_list_codes"):
         query = db.query(models.RedeemCode)

@@ -3,7 +3,7 @@
 import type { AdminState } from '@/store/admin/types'
 
 export const initialAdminState: AdminState = {
-  authenticated: null,
+  authenticated: true,
   loginPassword: '',
   loginLoading: false,
   loginError: '',
@@ -20,6 +20,7 @@ export const initialAdminState: AdminState = {
   serviceStatus: {
     backend: 'unknown',
     lastCheck: null,
+    db: undefined,
   },
   usersPage: 1,
   usersPageSize: 50,

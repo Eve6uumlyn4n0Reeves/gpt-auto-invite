@@ -1,4 +1,4 @@
-import { adminRequest } from '@/lib/api/admin-client'
+import { usersAdminRequest } from '@/lib/api/admin-client'
 import type { CodeData } from '@/store/admin-context'
 
 export interface CodesQueryParams {
@@ -27,7 +27,7 @@ export async function fetchCodes(params: CodesQueryParams) {
   const query = search.toString()
   const endpoint = query ? `/codes?${query}` : '/codes'
 
-  return adminRequest<CodesResponse>(endpoint)
+  return usersAdminRequest<CodesResponse>(endpoint)
 }
 
 export interface GenerateCodesPayload {
@@ -36,7 +36,7 @@ export interface GenerateCodesPayload {
 }
 
 export async function generateCodes(payload: GenerateCodesPayload) {
-  return adminRequest<{ codes: string[] }>('/codes', {
+  return usersAdminRequest<{ codes: string[] }>('/codes', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

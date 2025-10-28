@@ -94,9 +94,21 @@ export interface StatsData {
   remaining_code_quota?: number
 }
 
+export interface DbEngineStatus {
+  ok: boolean
+  url?: string | null
+  dialect?: string | null
+  alembic_version?: string | null
+  error?: string | null
+}
+
 export interface ServiceStatus {
   backend: 'online' | 'offline' | 'unknown'
   lastCheck: Date | null
+  db?: {
+    users?: DbEngineStatus
+    pool?: DbEngineStatus
+  }
 }
 
 export interface AdminState {

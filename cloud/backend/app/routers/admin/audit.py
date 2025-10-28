@@ -20,6 +20,7 @@ def list_audit_logs(
     page_size: int = Query(50, ge=1, le=200, description="每页数量，默认50，最大200"),
 ):
     require_admin(request, db)
+    # 建议传 X-Domain=users；读取接口不强制
 
     total = db.query(func.count(models.AuditLog.id)).scalar() or 0
     if total == 0:

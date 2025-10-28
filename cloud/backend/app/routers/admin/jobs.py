@@ -5,13 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 import json
 
 from app import models
 from app.schemas import BatchOpIn
 from app.services.services.jobs import enqueue_users_job
-from .dependencies import admin_ops_rate_limit_dep, get_db, require_admin
+from app.services.services import admin_jobs
+from .dependencies import admin_ops_rate_limit_dep, get_db, require_admin, require_domain
 
 router = APIRouter()
 
@@ -24,6 +24,13 @@ def batch_users_async(
     _: None = Depends(admin_ops_rate_limit_dep),
 ):
     require_admin(request, db)
+    # Users 域批处理接口
+    import asyncio
+    if hasattr(asyncio, 'create_task'):
+        pass
+    from app.config import settings as _s
+    if _s.env not in ("dev", "development", "test", "testing") and request.headers.get('X-Domain') != 'users':
+        raise HTTPException(status_code=400, detail="X-Domain 不匹配，期望 users")
 
     action = payload.action
     ids = payload.ids or []
@@ -51,64 +58,41 @@ def list_jobs(
 ):
     require_admin(request, db)
 
-    q = db.query(models.BatchJob)
-    if status:
-        try:
-            st = models.BatchJobStatus(status)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="无效的状态")
-        q = q.filter(models.BatchJob.status == st)
-
-    total = q.count()
-    if total == 0:
-        return {"items": [], "pagination": {"page": page, "page_size": page_size, "total": 0, "total_pages": 0}}
-
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    page = max(1, min(page, total_pages))
-    items = (
-        q.order_by(models.BatchJob.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-
-    def as_dict(job: models.BatchJob):
-        return {
-            "id": job.id,
-            "job_type": job.job_type.value,
-            "status": job.status.value,
-            "actor": job.actor,
-            "total_count": job.total_count,
-            "success_count": job.success_count,
-            "failed_count": job.failed_count,
-            "created_at": job.created_at.isoformat() if job.created_at else None,
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
-        }
-
-    return {
-        "items": [as_dict(x) for x in items],
-        "pagination": {"page": page, "page_size": page_size, "total": total, "total_pages": total_pages},
-    }
+    try:
+        items, pagination = admin_jobs.list_jobs(
+            db,
+            status=status,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的状态")
+    return {"items": items, "pagination": pagination}
 
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     require_admin(request, db)
-    job = db.get(models.BatchJob, job_id)
-    if not job:
+    try:
+        data = admin_jobs.get_job(db, job_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return {
-        "id": job.id,
-        "job_type": job.job_type.value,
-        "status": job.status.value,
-        "actor": job.actor,
-        "total_count": job.total_count,
-        "success_count": job.success_count,
-        "failed_count": job.failed_count,
-        "last_error": job.last_error,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-        "started_at": job.started_at.isoformat() if job.started_at else None,
-        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
-        "payload": json.loads(job.payload_json or "{}"),
-    }
+    payload_json = data.pop("payload", None)
+    payload = json.loads(payload_json or "{}") if isinstance(payload_json, str) else payload_json
+    data["payload"] = payload
+    return data
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job(job_id: int, request: Request, db: Session = Depends(get_db), _: None = Depends(admin_ops_rate_limit_dep)):
+    require_admin(request, db)
+    try:
+        job_data = admin_jobs.retry_job(db, job_id)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "job not found":
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if message == "job is running":
+            raise HTTPException(status_code=400, detail="任务正在运行，不能重试")
+        raise HTTPException(status_code=400, detail="重试失败")
+    return {"success": True, "status": job_data["status"]}

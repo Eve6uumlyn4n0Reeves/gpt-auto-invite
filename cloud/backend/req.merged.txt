@@ -1,0 +1,54 @@
+# 后端依赖（UTF-8 无 BOM）
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# 数据库
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# 安全与加密
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+cryptography>=43.0.1
+itsdangerous>=2.2.0
+
+# HTTP 客户端
+requests==2.31.0
+
+# 邮件
+aiosmtplib==3.0.1
+email-validator==2.1.0
+
+# 配置
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# 监控与日志
+structlog==23.2.0
+prometheus-client==0.19.0
+
+# 缓存与限流
+redis==5.0.7
+
+# 工具
+python-dateutil==2.8.2
+pytz==2023.3
+jinja2==3.1.2
+
+# 开发（可选）
+black==23.11.0
+isort==5.12.0
+# 测试依赖
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+httpx==0.28.1
+pytest-mock==3.14.0
+factory-boy==3.3.1
+faker==30.8.1
+freezegun==1.5.1
+sqlalchemy-utils==0.41.2
+testcontainers==4.9.0
+testcontainers-postgres==0.7.2

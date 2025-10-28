@@ -3,7 +3,7 @@ CSRF Token 工具模块
 """
 import time
 from typing import Optional
-from fastapi import Request, HTTPException
+from fastapi import Request
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 from app.config import settings
 from app.security import verify_session, unsign_session
@@ -86,25 +86,23 @@ class CSRFTokenManager:
 
         return sid
 
-# CSRF Token中间件装饰器
+# CSRF Token校验依赖
 async def require_csrf_token(request: Request) -> None:
-    """要求CSRF token的装饰器函数"""
-    if request.method.upper() == "GET":
-        return
-
-    # 获取session ID
-    session_id = CSRFTokenManager.get_session_id_from_request(request)
-    if not session_id:
-        raise HTTPException(status_code=401, detail="No session found")
-
-    # 获取CSRF token
+    """强制校验 CSRF：从请求中提取 token，并与会话绑定校验。"""
     token = await CSRFTokenManager.extract_token_from_request(request)
     if not token:
-        raise HTTPException(status_code=403, detail="CSRF token missing")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="缺少CSRF Token")
 
-    # 验证token
-    if not CSRFTokenManager.validate_token(token, session_id):
-        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    session_id = CSRFTokenManager.get_session_id_from_request(request)
+    if not session_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="未认证")
+
+    ok = CSRFTokenManager.validate_token(token, session_id)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="CSRF校验失败")
 
 def generate_csrf_token_for_session(session_id: str) -> str:
     """为指定session生成CSRF token"""

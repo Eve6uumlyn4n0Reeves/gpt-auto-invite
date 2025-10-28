@@ -12,8 +12,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app import models
-from app.database import Base, get_db, SessionLocal
+from app.config import settings
+from app.database import BaseUsers, BasePool, get_db, SessionLocal
+from app.routers.admin import dependencies as admin_deps
 from app.security import encrypt_token
+
+# 测试环境强制识别为 test，确保服务逻辑走测试分支
+settings.env = "test"
 
 
 @pytest.fixture(scope="session")
@@ -24,9 +29,30 @@ def test_engine():
         poolclass=StaticPool,
         echo=False,
     )
-    Base.metadata.create_all(bind=engine)
+    # 测试环境：在同一内存库上创建两套表，便于端到端用例
+    BaseUsers.metadata.create_all(bind=engine)
+    BasePool.metadata.create_all(bind=engine)
+    try:
+        res = engine.execute("PRAGMA table_info('mother_accounts')").fetchall()
+        print('TEST mother_accounts columns:', res)
+    except Exception:
+        pass
+    # 初始化默认管理员配置，避免登录路由空指针
+    try:
+        from app.security import hash_password
+        TestSession = sessionmaker(bind=engine)
+        sess = TestSession()
+        try:
+            if not sess.query(models.AdminConfig).first():
+                sess.add(models.AdminConfig(password_hash=hash_password("admin123")))
+                sess.commit()
+        finally:
+            sess.close()
+    except Exception:
+        pass
     yield engine
-    Base.metadata.drop_all(bind=engine)
+    BasePool.metadata.drop_all(bind=engine)
+    BaseUsers.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -45,11 +71,21 @@ def db_session(test_engine) -> Generator[Session, None, None]:
 def test_client(db_session: Session) -> Generator[TestClient, None, None]:
     def override_get_db():
         try:
+            # debug: print bound url and columns
+            bind = db_session.get_bind()
+            try:
+                cols = bind.execute("PRAGMA table_info('mother_accounts')").fetchall()
+                print('OVERRIDE mother_accounts columns:', cols)
+            except Exception:
+                pass
             yield db_session
         finally:
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    # 确保 admin 路由使用相同依赖覆盖（users/pool 双库）
+    app.dependency_overrides[admin_deps.get_db] = override_get_db
+    app.dependency_overrides[admin_deps.get_db_pool] = override_get_db
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()

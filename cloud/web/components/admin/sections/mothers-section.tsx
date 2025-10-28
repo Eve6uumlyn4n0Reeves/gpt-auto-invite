@@ -1,7 +1,10 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, Plus, Users } from "lucide-react"
+import { useState } from "react"
 import type { MotherAccount } from "@/store/admin-context"
+import { AutoImportDialog } from "@/components/admin/auto-import-dialog"
+import { ChildrenDialog } from "@/components/admin/children-dialog"
 
 interface MothersSectionProps {
   mothers: MotherAccount[]
@@ -22,13 +25,19 @@ export function MothersSection({
   onCopyMotherName,
   onDeleteMother,
 }: MothersSectionProps) {
+  const [autoImportOpen, setAutoImportOpen] = useState(false)
+  const [childrenOpen, setChildrenOpen] = useState(false)
+  const [childrenMother, setChildrenMother] = useState<MotherAccount | null>(null)
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">母号看板</h2>
         <div className="flex gap-2">
           <Button size="sm" onClick={onCreateMother}>
-            新增母号
+            <Plus className="w-4 h-4 mr-2" /> 新增母号
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setAutoImportOpen(true)}>
+            🚀 一键录入
           </Button>
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} /> 刷新
@@ -80,6 +89,9 @@ export function MothersSection({
                   <Button variant="outline" size="sm" onClick={() => onCopyMotherName(mother)}>
                     复制名称
                   </Button>
+                  <Button variant="outline" size="sm" onClick={() => { setChildrenMother(mother); setChildrenOpen(true) }}>
+                    <Users className="w-4 h-4 mr-1" /> 子号
+                  </Button>
                 </div>
                 <Button variant="destructive" size="sm" onClick={() => onDeleteMother(mother.id)}>
                   删除
@@ -89,7 +101,19 @@ export function MothersSection({
           )
         })}
       </div>
+
+      {/* 一键录入对话框 */}
+      <AutoImportDialog
+        open={autoImportOpen}
+        onOpenChange={setAutoImportOpen}
+        onSuccess={onRefresh}
+      />
+      <ChildrenDialog
+        open={childrenOpen}
+        onOpenChange={(o) => { setChildrenOpen(o); if (!o) setChildrenMother(null) }}
+        motherId={childrenMother?.id ?? 0}
+        motherName={childrenMother?.name ?? ''}
+      />
     </div>
   )
 }
-

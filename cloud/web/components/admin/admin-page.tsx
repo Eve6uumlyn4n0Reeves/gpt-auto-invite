@@ -10,6 +10,7 @@ import type { AdminTab } from '@/lib/admin-navigation'
 import { AdminLoginForm } from '@/components/admin/login-form'
 import { StatsCards } from '@/components/admin/stats-cards'
 import { SearchFilters } from '@/components/admin/search-filters'
+import { SearchFiltersUsers } from '@/components/admin/search-filters-users'
 
 interface AdminPageProps {
   view: AdminTab
@@ -67,7 +68,7 @@ export function AdminPage({
 
       {showStats && <StatsCards />}
 
-      {shouldShowFilters && <SearchFilters />}
+      {shouldShowFilters && (view === 'users' || view === 'codes' ? <SearchFiltersUsers /> : <SearchFilters />)}
 
       {children}
     </div>

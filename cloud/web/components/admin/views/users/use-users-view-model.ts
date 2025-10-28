@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useAdminContext, useAdminActions, type UserData } from '@/store/admin-context'
+import { useAdminContext, type UserData } from '@/store/admin-context'
+import { useUsersContext } from '@/store/users/context'
+import { useUsersActions } from '@/store/users/context'
 import { useAdminSimple } from '@/hooks/use-admin-simple'
 import { fetchUsers } from '@/lib/api/users'
 import { useAdminBatchActions } from '@/hooks/use-admin-batch-actions'
 import { useAdminCsrfToken } from '@/hooks/use-admin-csrf-token'
 import { useNotifications } from '@/components/notification-system'
+import { useSuccessFlow } from '@/hooks/use-success-flow'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useAdminAutoRefresh } from '@/hooks/use-admin-auto-refresh'
 import type { UserTableColumn } from '@/components/admin/sections/users-section'
@@ -40,13 +43,14 @@ interface UsersViewModel {
 }
 
 export const useUsersViewModel = (): UsersViewModel => {
-  const { state } = useAdminContext()
-  const { setUsersPage, setUsersPageSize } = useAdminActions()
+  const { state } = useUsersContext()
+  const { setUsersPage, setUsersPageSize } = useUsersActions()
   const { loadStats } = useAdminSimple()
   const queryClient = useQueryClient()
   const { actions: batchActions } = useAdminBatchActions()
   const { ensureCsrfToken, resetCsrfToken } = useAdminCsrfToken()
   const notifications = useNotifications()
+  const { succeed } = useSuccessFlow()
   const debouncedSearchTerm = useDebouncedValue(state.searchTerm, 300)
 
   const [selectedUsers, setSelectedUsers] = useState<number[]>([])
@@ -84,7 +88,7 @@ export const useUsersViewModel = (): UsersViewModel => {
 
   const usersQuery = useQuery({
     queryKey: usersQueryKey,
-    enabled: state.authenticated === true,
+    enabled: true,
     // v5: keepPreviousData removed
     queryFn: () =>
       fetchUsers({
@@ -153,6 +157,7 @@ export const useUsersViewModel = (): UsersViewModel => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'X-Domain': 'users',
             'X-Request-Source': 'nextjs-frontend',
           },
           body: JSON.stringify({
@@ -210,6 +215,7 @@ export const useUsersViewModel = (): UsersViewModel => {
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': token,
+          'X-Domain': 'users',
           'X-Request-Source': 'nextjs-frontend',
         },
         body: JSON.stringify({
@@ -264,6 +270,7 @@ export const useUsersViewModel = (): UsersViewModel => {
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': token,
+          'X-Domain': 'users',
           'X-Request-Source': 'nextjs-frontend',
         },
         body: JSON.stringify({
@@ -273,23 +280,17 @@ export const useUsersViewModel = (): UsersViewModel => {
         }),
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok || data?.success === false) {
-        throw new Error(data?.message || data?.detail || '异步批量提交失败')
-      }
-      notifications.addNotification({
-        type: 'success',
-        title: '任务已提交',
-        message: `任务 #${data?.job_id ?? ''} 已创建，系统将后台执行`,
-      })
+      if (!response.ok || data?.success === false) throw new Error(data?.message || data?.detail || '异步批量提交失败')
       setSelectedUsers([])
       setBatchOperation('')
+      // 成功流：提示并跳转到“任务列表”
+      await succeed(
+        { ok: true, data } as any,
+        () => ({ title: '任务已提交', message: `任务 #${data?.job_id ?? ''} 已创建`, navigateTo: '/admin/(protected)/jobs' }),
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : '异步批量提交失败'
-      notifications.addNotification({
-        type: 'error',
-        title: '任务提交失败',
-        message,
-      })
+      notifications.addNotification({ type: 'error', title: '任务提交失败', message })
     } finally {
       setBatchLoading(false)
       resetCsrfToken()

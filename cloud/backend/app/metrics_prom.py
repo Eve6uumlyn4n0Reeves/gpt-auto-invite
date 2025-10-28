@@ -27,6 +27,21 @@ if Counter is not None:
         'maintenance_lock_miss_total',
         'Total number of times maintenance lock acquisition missed'
     )
+    admin_api_requests_total = Counter(
+        'admin_api_requests_total',
+        'Admin API requests count',
+        labelnames=('path','method','domain','status'),
+    )
+    pool_sync_actions_total = Counter(
+        'pool_sync_actions_total',
+        'Pool sync actions count',
+        labelnames=('action','result'),
+    )
+    child_ops_total = Counter(
+        'child_ops_total',
+        'Child account operations count',
+        labelnames=('action','result'),
+    )
 else:
     class _Dummy:
         def labels(self, **kwargs):
@@ -40,3 +55,6 @@ else:
     provider_latency_ms = _Dummy()
     maintenance_lock_acquired_total = _Dummy()
     maintenance_lock_miss_total = _Dummy()
+    admin_api_requests_total = _Dummy()
+    pool_sync_actions_total = _Dummy()
+    child_ops_total = _Dummy()

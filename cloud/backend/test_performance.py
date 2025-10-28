@@ -10,12 +10,14 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.config import settings
-from app.database import Base
+from app.database import BaseUsers, BasePool
 
 
 def get_session():
     engine = create_engine(settings.database_url)
-    Base.metadata.create_all(bind=engine)
+    # 用单库压测：在同一库创建两套表
+    BaseUsers.metadata.create_all(bind=engine)
+    BasePool.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine)
     return engine, SessionLocal()
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import models, provider
 from app.config import settings
 from app.security import decrypt_token
+from app.repositories import PoolRepository, UsersRepository
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
 
@@ -31,16 +32,16 @@ def _clear_seat(seat: models.SeatAllocation) -> None:
     seat.member_id = None
 
 
-def _release_seat_by_team_email(db: Session, team_id: str, email: str) -> bool:
+def _release_seat_by_team_email(pool_repo: PoolRepository, team_id: str, email: str) -> bool:
     seat = (
-        db.query(models.SeatAllocation)
+        pool_repo.session.query(models.SeatAllocation)
         .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
         .first()
     )
     if not seat:
         return False
     _clear_seat(seat)
-    db.add(seat)
+    pool_repo.session.add(seat)
     return True
 
 
@@ -85,11 +86,38 @@ def _find_member_id_by_email(payload: object, email: str) -> Optional[str]:
 
 
 class InviteService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, users_repo: UsersRepository, pool_repo: PoolRepository):
+        self.users_repo = users_repo
+        self.pool_repo = pool_repo
+        self.users_session = users_repo.session
+        self.pool_session = pool_repo.session
+
+    def _commit_with_rollback(self) -> None:
+        try:
+            self.pool_repo.commit()
+        except Exception:
+            self.pool_repo.rollback()
+            self.users_repo.rollback()
+            raise
+        try:
+            self.users_repo.commit()
+        except Exception:
+            self.users_repo.rollback()
+            self.pool_repo.rollback()
+            raise
+
+    def _mark_mother_invalid(self, mother: Optional[models.MotherAccount]) -> None:
+        if not mother:
+            return
+        mother.status = models.MotherStatus.invalid
+        self.pool_session.add(mother)
+        try:
+            self.pool_repo.commit()
+        except Exception:
+            self.pool_repo.rollback()
 
     def _choose_target(
-        self, email: str, exclude_mother_ids: Optional[set[int]] = None
+        self, email: str, exclude_mother_ids: Optional[set[int]] = None, group_id: Optional[int] = None
     ) -> Optional[TargetSelection]:
         """
         选择目标母号与团队：
@@ -97,16 +125,21 @@ class InviteService:
         - 仅考虑活跃母号，且需存在可用团队与空位
         - 同一邮箱允许加入多个 team，但同一 team 内不能重复
         - 按批次流式遍历母号，逐个查询空座与可用团队，避免一次性加载全部数据
+        - 如果指定了 group_id，则仅在该用户组内选择母号
         """
         exclude_ids = exclude_mother_ids or set()
 
         mothers_query = (
-            self.db.query(models.MotherAccount)
+            self.pool_session.query(models.MotherAccount)
             .filter(models.MotherAccount.status == models.MotherStatus.active)
             .order_by(models.MotherAccount.created_at.asc())
         )
         if exclude_ids:
             mothers_query = mothers_query.filter(~models.MotherAccount.id.in_(exclude_ids))  # type: ignore[arg-type]
+        
+        # 如果指定了用户组，仅选择该组内的母号
+        if group_id is not None:
+            mothers_query = mothers_query.filter(models.MotherAccount.group_id == group_id)
 
         batch_size = 50
         mothers_iter = mothers_query.yield_per(batch_size)
@@ -135,7 +168,7 @@ class InviteService:
         mother_ids = [mother.id for mother in mothers]
 
         seats = (
-            self.db.query(models.SeatAllocation)
+            self.pool_session.query(models.SeatAllocation)
             .filter(
                 models.SeatAllocation.mother_id.in_(mother_ids),
                 models.SeatAllocation.status == models.SeatStatus.free,
@@ -148,7 +181,7 @@ class InviteService:
             seat_map.setdefault(seat.mother_id, seat)
 
         teams = (
-            self.db.query(models.MotherTeam)
+            self.pool_session.query(models.MotherTeam)
             .filter(
                 models.MotherTeam.mother_id.in_(mother_ids),
                 models.MotherTeam.is_enabled == True,  # noqa: E712
@@ -170,7 +203,7 @@ class InviteService:
         existing_for_email: Set[str] = set()
         if team_ids:
             rows = (
-                self.db.query(models.SeatAllocation.team_id)
+                self.pool_session.query(models.SeatAllocation.team_id)
                 .filter(
                     models.SeatAllocation.team_id.in_(team_ids),
                     models.SeatAllocation.email == email,
@@ -202,13 +235,26 @@ class InviteService:
     def invite_email(
         self, email: str, code_row: Optional[models.RedeemCode]
     ) -> tuple[bool, str, Optional[int], Optional[int], Optional[str]]:
+        # 提取用户组 ID（如果码绑定了组）
+        target_group_id: Optional[int] = None
+        if code_row and code_row.meta_json:
+            try:
+                import json
+
+                meta = json.loads(code_row.meta_json)
+                target_group_id = meta.get("mother_group_id")
+            except Exception:
+                pass
         tried_mothers: set[int] = set()
         switch_remaining = 1
 
         while True:
-            choice = self._choose_target(email, exclude_mother_ids=tried_mothers)
+            choice = self._choose_target(email, exclude_mother_ids=tried_mothers, group_id=target_group_id)
             if not choice:
-                return False, "暂无可用座位（所有母号已满或团队不可用）", None, None, None
+                msg = "暂无可用座位（所有母号已满或团队不可用）"
+                if target_group_id:
+                    msg += f"（限定用户组 {target_group_id}）"
+                return False, msg, None, None, None
 
             mother = choice.mother
             team = choice.team
@@ -219,17 +265,17 @@ class InviteService:
                 now = datetime.utcnow()
                 if mother.token_expires_at and mother.token_expires_at < now:
                     mother.status = models.MotherStatus.invalid
-                    self.db.add(mother)
-                    self.db.commit()
+                    self.pool_session.add(mother)
+                    self.pool_repo.commit()
                     continue
             except Exception:
-                pass
+                self.pool_repo.rollback()
 
             access_token = decrypt_token(mother.access_token_enc)
 
             # 已占用（幂等）
             exists = (
-                self.db.query(models.SeatAllocation)
+                self.pool_session.query(models.SeatAllocation)
                 .filter(models.SeatAllocation.team_id == team.team_id, models.SeatAllocation.email == email)
                 .first()
             )
@@ -240,18 +286,18 @@ class InviteService:
                     code_row.used_by_mother_id = mother.id
                     code_row.used_by_team_id = team.team_id
                     code_row.used_at = datetime.utcnow()
-                    self.db.add(code_row)
-                    self.db.commit()
+                    self.users_session.add(code_row)
+                    self.users_repo.commit()
                 return True, "已占用该团队座位", exists.invite_request_id, mother.id, team.team_id
 
             # 抢占 free 座位，置为 held，30s TTL
             seat = None
-            dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
+            dialect = getattr(getattr(self.pool_session, "bind", None), "dialect", None)
             is_pg = bool(dialect and getattr(dialect, "name", "").startswith("postgres"))
             held_until = datetime.utcnow() + timedelta(seconds=settings.seat_hold_ttl_seconds)
 
             if is_pg:
-                candidate = self.db.execute(
+                candidate = self.pool_session.execute(
                     select(models.SeatAllocation)
                     .where(
                         models.SeatAllocation.id == choice.seat_id,
@@ -267,18 +313,18 @@ class InviteService:
                     seat.held_until = held_until
                     seat.team_id = team.team_id
                     seat.email = email
-                    self.db.add(seat)
-                    self.db.commit()
+                    self.pool_session.add(seat)
+                    self.pool_repo.commit()
             else:
                 claim_attempts = max(1, settings.seat_claim_retry_attempts)
                 backoff_ms = max(1, settings.seat_claim_backoff_ms_base)
                 while claim_attempts > 0 and seat is None:
                     claim_attempts -= 1
-                    candidate = self.db.get(models.SeatAllocation, choice.seat_id)
+                    candidate = self.pool_session.get(models.SeatAllocation, choice.seat_id)
                     if not candidate:
                         break
 
-                    res = self.db.execute(
+                    res = self.pool_session.execute(
                         update(models.SeatAllocation)
                         .where(
                             models.SeatAllocation.id == candidate.id,
@@ -292,8 +338,8 @@ class InviteService:
                         )
                     )
                     if res.rowcount == 1:
-                        self.db.commit()
-                        seat = self.db.get(models.SeatAllocation, candidate.id)
+                        self.pool_repo.commit()
+                        seat = self.pool_session.get(models.SeatAllocation, candidate.id)
                         break
                     # 否则说明并发冲突，重试
                     if claim_attempts > 0:
@@ -307,19 +353,25 @@ class InviteService:
                 return False, "暂无可用座位（座位被占用）", None, mother.id, team.team_id
 
             # 先创建 InviteRequest 再发送，避免长时间 pending
-            inv = models.InviteRequest(
+            inv = self.users_repo.create_invite_request(
                 mother_id=mother.id,
                 team_id=team.team_id,
                 email=email,
                 code_id=code_row.id if code_row else None,
                 status=models.InviteStatus.pending,
             )
-            self.db.add(inv)
-            self.db.flush()
-
-            seat.invite_request_id = inv.id
-            self.db.add(seat)
-            self.db.commit()
+            try:
+                seat.invite_request_id = inv.id
+                self.pool_session.add(seat)
+                self.pool_repo.commit()
+                self.users_repo.commit()
+            except Exception:
+                self.pool_repo.rollback()
+                self.users_repo.rollback()
+                _clear_seat(seat)
+                self.pool_session.add(seat)
+                self.pool_repo.commit()
+                raise
 
             # 发送邀请
             try:
@@ -344,16 +396,17 @@ class InviteService:
                 if e.status in (401, 403):
                     try:
                         mother.status = models.MotherStatus.invalid
-                        self.db.add(mother)
-                        self.db.commit()
+                        self.pool_session.add(mother)
+                        self.pool_repo.commit()
                     except Exception:
-                        self.db.rollback()
+                        self.pool_repo.rollback()
 
                 if e.status in RETRY_STATUS and switch_remaining > 0:
                     switch_remaining -= 1
-                    self.db.add(inv)
-                    self.db.add(seat)
-                    self.db.commit()
+                    self.users_session.add(inv)
+                    self.pool_session.add(seat)
+                    self.pool_repo.commit()
+                    self.users_repo.commit()
                     continue
             except Exception as e:
                 inv.status = models.InviteStatus.failed
@@ -362,9 +415,10 @@ class InviteService:
 
             inv.attempt_count += 1
             inv.last_attempt_at = datetime.utcnow()
-            self.db.add(inv)
-            self.db.add(seat)
-            self.db.commit()
+            self.users_session.add(inv)
+            self.pool_session.add(seat)
+            self.pool_repo.commit()
+            self.users_repo.commit()
 
             if code_row and inv.status == models.InviteStatus.sent:
                 code_row.status = models.CodeStatus.used
@@ -372,8 +426,8 @@ class InviteService:
                 code_row.used_by_mother_id = mother.id
                 code_row.used_by_team_id = team.team_id
                 code_row.used_at = datetime.utcnow()
-                self.db.add(code_row)
-                self.db.commit()
+                self.users_session.add(code_row)
+                self.users_repo.commit()
 
             if inv.status == models.InviteStatus.sent:
                 return True, "邀请已发送", inv.id, mother.id, team.team_id
@@ -382,161 +436,148 @@ class InviteService:
                 return False, "邀请发送失败，请稍后重试", inv.id, mother.id, team.team_id
 
 
-def resend_invite(db: Session, email: str, team_id: str) -> tuple[bool, str]:
-    seat = (
-        db.query(models.SeatAllocation)
-        .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
-        .first()
-    )
+    def resend_invite(self, email: str, team_id: str) -> tuple[bool, str]:
+        seat = (
+            self.pool_session.query(models.SeatAllocation)
+            .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
+            .first()
+        )
+        if not seat or not seat.invite_request_id:
+            return False, "操作失败，请稍后重试"
 
-    if not seat or not seat.invite_request_id:
-        return False, "操作失败，请稍后重试"
+        inv = self.users_repo.get_invite_request(seat.invite_request_id)
+        if not inv:
+            return False, "操作失败，请稍后重试"
 
-    inv = db.get(models.InviteRequest, seat.invite_request_id)
-    if not inv:
-        return False, "操作失败，请稍后重试"
+        mother = self.pool_repo.get_mother(seat.mother_id)
+        if not mother or mother.status != models.MotherStatus.active:
+            return False, "操作失败，请稍后重试"
 
-    mother = db.get(models.MotherAccount, seat.mother_id)
-    if not mother or mother.status != models.MotherStatus.active:
-        return False, "操作失败，请稍后重试"
+        access_token = decrypt_token(mother.access_token_enc)
 
-    access_token = decrypt_token(mother.access_token_enc)
-
-    try:
-        resp = provider.send_invite(access_token, team_id, email, resend=True)
-        invites = resp.get("invites", [])
-        if invites:
-            invite_data = invites[0]
-            inv.invite_id = invite_data.get("id")
-            inv.status = models.InviteStatus.sent
-            seat.invite_id = inv.invite_id
-            seat.status = models.SeatStatus.used
-        else:
+        try:
+            resp = provider.send_invite(access_token, team_id, email, resend=True)
+            invites = resp.get("invites", [])
+            if invites:
+                invite_data = invites[0]
+                inv.invite_id = invite_data.get("id")
+                inv.status = models.InviteStatus.sent
+                seat.invite_id = inv.invite_id
+                seat.status = models.SeatStatus.used
+            else:
+                inv.status = models.InviteStatus.failed
+                inv.error_msg = "No invites in response"
+        except provider.ProviderError as e:
             inv.status = models.InviteStatus.failed
-            inv.error_msg = "No invites in response"
-    except provider.ProviderError as e:
-        inv.status = models.InviteStatus.failed
-        inv.error_msg = str(e)
-        # 标记令牌失效的母号，便于后续绕过
-        if e.status in (401, 403):
-            try:
-                mother.status = models.MotherStatus.invalid
-                db.add(mother)
-                db.commit()
-            except Exception:
-                db.rollback()
-    except Exception as e:
-        inv.status = models.InviteStatus.failed
-        inv.error_msg = str(e)
+            inv.error_msg = str(e)
+            if e.status in (401, 403):
+                self._mark_mother_invalid(mother)
+        except Exception as e:
+            inv.status = models.InviteStatus.failed
+            inv.error_msg = str(e)
 
-    inv.attempt_count += 1
-    inv.last_attempt_at = datetime.utcnow()
-    db.add(inv)
-    db.add(seat)
-    db.commit()
+        inv.attempt_count += 1
+        inv.last_attempt_at = datetime.utcnow()
+        self.users_session.add(inv)
+        self.pool_session.add(seat)
 
-    if inv.status == models.InviteStatus.sent:
-        return True, "重发成功"
-    else:
+        self._commit_with_rollback()
+
+        if inv.status == models.InviteStatus.sent:
+            return True, "重发成功"
         return False, "重发失败，请稍后重试"
 
+    def cancel_invite(self, email: str, team_id: str) -> tuple[bool, str]:
+        seat = (
+            self.pool_session.query(models.SeatAllocation)
+            .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
+            .first()
+        )
+        if not seat or not seat.invite_id:
+            return False, "操作失败，请稍后重试"
 
-def cancel_invite(db: Session, email: str, team_id: str) -> tuple[bool, str]:
-    seat = (
-        db.query(models.SeatAllocation)
-        .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
-        .first()
-    )
+        mother = self.pool_repo.get_mother(seat.mother_id)
+        if not mother:
+            return False, "操作失败，请稍后重试"
 
-    if not seat or not seat.invite_id:
-        return False, "操作失败，请稍后重试"
+        access_token = decrypt_token(mother.access_token_enc)
 
-    mother = db.get(models.MotherAccount, seat.mother_id)
-    if not mother:
-        return False, "操作失败，请稍后重试"
-
-    access_token = decrypt_token(mother.access_token_enc)
-
-    try:
-        provider.cancel_invite(access_token, team_id, seat.invite_id)
-
-        # 更新状态
-        if seat.invite_request_id:
-            inv = db.get(models.InviteRequest, seat.invite_request_id)
-            if inv:
-                inv.status = models.InviteStatus.cancelled
-                db.add(inv)
-
-        _clear_seat(seat)
-        db.add(seat)
-        db.commit()
-
-        return True, "取消成功"
-    except provider.ProviderError as e:
-        if e.status in (401, 403):
-            try:
-                mother.status = models.MotherStatus.invalid
-                db.add(mother)
-                db.commit()
-            except Exception:
-                db.rollback()
-        return False, "取消失败，请稍后重试"
-    except Exception:
-        return False, "取消失败，请稍后重试"
-
-
-def remove_member(db: Session, email: str, team_id: str) -> tuple[bool, str]:
-    seat = (
-        db.query(models.SeatAllocation)
-        .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
-        .first()
-    )
-
-    if not seat:
-        return False, "操作失败，请稍后重试"
-
-    mother = db.get(models.MotherAccount, seat.mother_id)
-    if not mother:
-        return False, "操作失败，请稍后重试"
-
-    access_token = decrypt_token(mother.access_token_enc)
-    member_id = seat.member_id
-
-    if not member_id:
         try:
-            members_payload = provider.list_members(access_token, team_id)
-            member_id = _find_member_id_by_email(members_payload, email)
+            provider.cancel_invite(access_token, team_id, seat.invite_id)
         except provider.ProviderError as e:
             if e.status in (401, 403):
-                try:
-                    mother.status = models.MotherStatus.invalid
-                    db.add(mother)
-                    db.commit()
-                except Exception:
-                    db.rollback()
-            return False, "操作失败，请稍后重试"
+                self._mark_mother_invalid(mother)
+            return False, "取消失败，请稍后重试"
         except Exception:
-            return False, "操作失败，请稍后重试"
+            return False, "取消失败，请稍后重试"
 
-        if not member_id:
-            return False, "操作失败，请稍后重试"
-
-    try:
-        provider.delete_member(access_token, team_id, member_id)
+        if seat.invite_request_id:
+            inv = self.users_repo.get_invite_request(seat.invite_request_id)
+            if inv:
+                inv.status = models.InviteStatus.cancelled
+                self.users_session.add(inv)
 
         _clear_seat(seat)
-        db.add(seat)
-        db.commit()
+        self.pool_session.add(seat)
 
-        return True, "移除成功"
-    except provider.ProviderError as e:
-        if e.status in (401, 403):
+        self._commit_with_rollback()
+        return True, "取消成功"
+
+    def remove_member(self, email: str, team_id: str) -> tuple[bool, str]:
+        seat = (
+            self.pool_session.query(models.SeatAllocation)
+            .filter(models.SeatAllocation.team_id == team_id, models.SeatAllocation.email == email)
+            .first()
+        )
+        if not seat:
+            return False, "操作失败，请稍后重试"
+
+        mother = self.pool_repo.get_mother(seat.mother_id)
+        if not mother:
+            return False, "操作失败，请稍后重试"
+
+        access_token = decrypt_token(mother.access_token_enc)
+        member_id = seat.member_id
+
+        if not member_id:
             try:
-                mother.status = models.MotherStatus.invalid
-                db.add(mother)
-                db.commit()
+                members_payload = provider.list_members(access_token, team_id)
+                member_id = _find_member_id_by_email(members_payload, email)
+            except provider.ProviderError as e:
+                if e.status in (401, 403):
+                    self._mark_mother_invalid(mother)
+                return False, "操作失败，请稍后重试"
             except Exception:
-                db.rollback()
-        return False, "移除失败，请稍后重试"
-    except Exception:
-        return False, "移除失败，请稍后重试"
+                return False, "操作失败，请稍后重试"
+
+            if not member_id:
+                return False, "操作失败，请稍后重试"
+
+        try:
+            provider.delete_member(access_token, team_id, member_id)
+        except provider.ProviderError as e:
+            if e.status in (401, 403):
+                self._mark_mother_invalid(mother)
+            return False, "移除失败，请稍后重试"
+        except Exception:
+            return False, "移除失败，请稍后重试"
+
+        _clear_seat(seat)
+        self.pool_session.add(seat)
+        self._commit_with_rollback()
+        return True, "移除成功"
+
+
+def resend_invite(users_db: Session, pool_db: Session, email: str, team_id: str) -> tuple[bool, str]:
+    service = InviteService(UsersRepository(users_db), PoolRepository(pool_db))
+    return service.resend_invite(email, team_id)
+
+
+def cancel_invite(users_db: Session, pool_db: Session, email: str, team_id: str) -> tuple[bool, str]:
+    service = InviteService(UsersRepository(users_db), PoolRepository(pool_db))
+    return service.cancel_invite(email, team_id)
+
+
+def remove_member(users_db: Session, pool_db: Session, email: str, team_id: str) -> tuple[bool, str]:
+    service = InviteService(UsersRepository(users_db), PoolRepository(pool_db))
+    return service.remove_member(email, team_id)

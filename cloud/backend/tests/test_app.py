@@ -184,7 +184,7 @@ def test_remove_member_resolves_member_id(db_session, sample_mothers):
     with patch("app.services.services.invites.provider.list_members", return_value=nested_response) as mock_list, patch(
         "app.services.services.invites.provider.delete_member", return_value={"ok": True}
     ) as mock_delete:
-        ok, message = remove_member(db_session, "user0@example.com", team.team_id)
+        ok, message = remove_member(db_session, db_session, "user0@example.com", team.team_id)
 
     assert ok is True
     assert message == "移除成功"
@@ -221,7 +221,7 @@ def test_remove_member_returns_failure_when_member_missing(db_session, sample_mo
     with patch("app.services.services.invites.provider.list_members", return_value={"members": []}) as mock_list, patch(
         "app.services.services.invites.provider.delete_member"
     ) as mock_delete:
-        ok, message = remove_member(db_session, "user1@example.com", team.team_id)
+        ok, message = remove_member(db_session, db_session, "user1@example.com", team.team_id)
 
     assert ok is False
     assert message == "操作失败，请稍后重试"

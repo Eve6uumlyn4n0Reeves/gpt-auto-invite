@@ -1,4 +1,4 @@
-import { adminRequest } from '@/lib/api/admin-client'
+import { usersAdminRequest } from '@/lib/api/admin-client'
 import type { BulkHistoryEntry } from '@/store/admin-context'
 
 export interface BulkHistoryQueryParams {
@@ -23,5 +23,5 @@ export async function fetchBulkHistory(params: BulkHistoryQueryParams) {
   const query = search.toString()
   const endpoint = query ? `/bulk/history?${query}` : '/bulk/history'
 
-  return adminRequest<BulkHistoryResponse>(endpoint)
+  return usersAdminRequest<BulkHistoryResponse>(endpoint)
 }

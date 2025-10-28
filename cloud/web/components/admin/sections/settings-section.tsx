@@ -5,8 +5,23 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Activity, FileInput, KeyRound, Power, RefreshCw, RotateCcw } from "lucide-react"
+import { Activity, Database, FileInput, KeyRound, Power, RefreshCw, RotateCcw } from "lucide-react"
 import type { ImportCookieResult, PerformanceStatsResponse } from "@/types/admin"
+import React from "react"
+import { adminRequest } from "@/lib/api/admin-client"
+
+type DbStatus = {
+  ok: boolean
+  url: string | null
+  dialect: string | null
+  alembic_version: string | null
+  error?: string | null
+}
+
+type DbStatusResponse = {
+  users: DbStatus
+  pool: DbStatus
+}
 
 interface SettingsSectionProps {
   changePasswordForm: {
@@ -57,8 +72,82 @@ export function SettingsSection({
   onTogglePerformance,
   onResetPerformance,
 }: SettingsSectionProps) {
+  const [dbStatus, setDbStatus] = React.useState<DbStatusResponse | null>(null)
+  const [dbStatusLoading, setDbStatusLoading] = React.useState(false)
+  const [dbStatusError, setDbStatusError] = React.useState<string | null>(null)
+
+  const loadDbStatus = React.useCallback(async () => {
+    setDbStatusLoading(true)
+    setDbStatusError(null)
+    try {
+      const { ok, data, error } = await adminRequest<DbStatusResponse>("/db-status")
+      if (!ok) throw new Error(error)
+      setDbStatus(data)
+    } catch (e) {
+      setDbStatusError(e instanceof Error ? e.message : "加载失败")
+    } finally {
+      setDbStatusLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void loadDbStatus()
+  }, [loadDbStatus])
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
+        <CardHeader className="flex sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-primary" />
+              数据库状态
+            </CardTitle>
+            <CardDescription>双库连接与迁移版本检查</CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={loadDbStatus} disabled={dbStatusLoading}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${dbStatusLoading ? "animate-spin" : ""}`} /> 刷新
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {dbStatusError && (
+            <Alert className="border-red-500/50 bg-red-500/10">
+              <AlertDescription className="text-red-600">{dbStatusError}</AlertDescription>
+            </Alert>
+          )}
+          {dbStatusLoading && (
+            <div className="space-y-2">
+              {[...Array(2)].map((_, i) => (
+                <div key={i} className="h-10 rounded bg-muted/40 animate-pulse" />
+              ))}
+            </div>
+          )}
+          {dbStatus && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[{ key: "users", label: "Users 库" }, { key: "pool", label: "Pool 库" }].map(({ key, label }) => {
+                const s = (dbStatus as any)[key] as DbStatus
+                const ok = s?.ok
+                return (
+                  <div key={key} className="rounded-md border border-border/40 p-3 bg-background/40">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">{label}</div>
+                      <div className={`text-xs ${ok ? "text-green-600" : "text-red-600"}`}>{ok ? "OK" : "ERROR"}</div>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground break-all">
+                      <div>Dialect：{s?.dialect || "?"}</div>
+                      <div>URL：{s?.url || "?"}</div>
+                      <div>Alembic：{s?.alembic_version || "(未知或未初始化)"}</div>
+                      {s?.error && <div className="text-red-600">错误：{s.error}</div>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

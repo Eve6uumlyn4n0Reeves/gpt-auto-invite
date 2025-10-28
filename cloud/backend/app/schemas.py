@@ -32,9 +32,10 @@ class MotherTeamIn(BaseModel):
 
 class MotherCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="母号名称")
-    access_token: str = Field(..., min_length=10, max_length=500, description="访问令牌")
-    token_expires_at: Optional[datetime] = None
-    teams: List[MotherTeamIn] = Field(default_factory=list, max_length=20, description="团队列表")
+    access_token_enc: str = Field(..., min_length=10, max_length=1000, description="加密后的访问令牌")
+    seat_limit: Optional[int] = Field(7, ge=1, le=100, description="席位限制")
+    group_id: Optional[int] = Field(None, description="用户组ID")
+    pool_group_id: Optional[int] = Field(None, description="号池组ID")
     notes: Optional[str] = Field(None, max_length=500, description="备注")
 
     @field_validator("name")
@@ -44,9 +45,9 @@ class MotherCreateIn(BaseModel):
             raise ValueError('母号名称只能包含字母、数字、点、下划线、百分号、加号、连字符和@符号，长度1-100字符')
         return v.strip()
 
-    @field_validator("access_token")
+    @field_validator("access_token_enc")
     @classmethod
-    def validate_access_token(cls, v: str) -> str:
+    def validate_access_token_enc(cls, v: str) -> str:
         # 检查是否包含明显的恶意内容
         suspicious_patterns = ['<script', 'javascript:', 'vbscript:', 'onload=', 'onerror=']
         v_lower = v.lower()
@@ -55,37 +56,93 @@ class MotherCreateIn(BaseModel):
                 raise ValueError('访问令牌包含不安全的内容')
         return v
 
-    @field_validator("teams")
+
+class MotherUpdateIn(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="母号名称")
+    status: Optional[str] = Field(None, description="状态：active, invalid, disabled")
+    seat_limit: Optional[int] = Field(None, ge=1, le=100, description="席位限制")
+    group_id: Optional[int] = Field(None, description="用户组ID")
+    pool_group_id: Optional[int] = Field(None, description="号池组ID")
+    notes: Optional[str] = Field(None, max_length=500, description="备注")
+
+    @field_validator("name")
     @classmethod
-    def validate_teams(cls, v: List[MotherTeamIn]) -> List[MotherTeamIn]:
-        if not v:
-            return v
-        # 检查是否有重复的team_id
-        team_ids = [team.team_id for team in v]
-        if len(team_ids) != len(set(team_ids)):
-            raise ValueError('团队ID不能重复')
-        return v
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not MOTHER_NAME_REGEX.match(v):
+            raise ValueError('母号名称只能包含字母、数字、点、下划线、百分号、加号、连字符和@符号，长度1-100字符')
+        return v.strip() if v else v
 
 class MotherOut(BaseModel):
     id: int
     name: str
     status: str
     seat_limit: int
-    seats_used: int
-    token_expires_at: Optional[datetime]
+    group_id: Optional[int]
+    pool_group_id: Optional[int]
     notes: Optional[str]
-    teams: List[MotherTeamIn]
-    
+    created_at: datetime
+    updated_at: datetime
+
+    # 统计信息
+    teams_count: int
+    children_count: int
+    seats_in_use: int
+    seats_available: int
+
+    # 详细信息（列表）
+    teams: List[dict] = Field(default_factory=list)
+    children: List[dict] = Field(default_factory=list)
+    seats: List[dict] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MotherListResult(BaseModel):
+    items: List[MotherOut]
+    total: int
+    page: int
+    page_size: int
+    has_next: bool
+    has_prev: bool
+
     model_config = ConfigDict(from_attributes=True)
 
 class ImportCookieIn(BaseModel):
     cookie: str
+    mode: Optional[str] = Field("user", description="导入模式：user 或 pool")
+    pool_group_id: Optional[int] = Field(None, description="当 mode=pool 时必填的号池组ID")
+    mother_group_id: Optional[int] = Field(None, description="当 mode=user 时可选的用户组ID")
+    rename_after_import: bool = Field(False, description="user 模式：导入后立即重命名团队")
 
 class ImportCookieOut(BaseModel):
     access_token: str
     token_expires_at: Optional[datetime] = None
     user_email: Optional[str] = None
     account_id: Optional[str] = None
+    job_id: Optional[int] = None
+
+class PoolGroupCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+class PoolGroupOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class PoolGroupSettingsIn(BaseModel):
+    team_template: Optional[str] = Field(None, max_length=200)
+    child_name_template: Optional[str] = Field(None, max_length=200)
+    child_email_template: Optional[str] = Field(None, max_length=200)
+    email_domain: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+
+class NamePreviewOut(BaseModel):
+    examples: List[str]
 
 class RedeemIn(BaseModel):
     code: str = Field(..., min_length=8, max_length=32, description="兑换码")
@@ -119,6 +176,7 @@ class BatchCodesIn(BaseModel):
     prefix: Optional[str] = Field(None, max_length=10, description="前缀")
     expires_at: Optional[datetime] = None
     batch_id: Optional[str] = Field(None, max_length=50, description="批次ID")
+    mother_group_id: Optional[int] = Field(None, description="限定用户组ID（兑换时仅在该组内分配）")
 
     @field_validator("prefix")
     @classmethod
@@ -265,6 +323,29 @@ class BatchOpOut(BaseModel):
 class BatchOperationSupportedActions(BaseModel):
     codes: List[str] = Field(default_factory=lambda: ["disable"])
     users: List[str] = Field(default_factory=lambda: ["resend", "cancel", "remove"])
+
+# 用户组相关
+class MotherGroupCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="用户组名称")
+    description: Optional[str] = Field(None, max_length=500, description="描述")
+    team_name_template: Optional[str] = Field(None, max_length=200, description="Team名称模板")
+
+class MotherGroupUpdateIn(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="用户组名称")
+    description: Optional[str] = Field(None, max_length=500, description="描述")
+    team_name_template: Optional[str] = Field(None, max_length=200, description="Team名称模板")
+    is_active: Optional[bool] = Field(None, description="是否活跃")
+
+class MotherGroupOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    team_name_template: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 # API响应统一格式
 class ApiResponse(BaseModel):

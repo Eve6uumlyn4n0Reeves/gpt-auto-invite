@@ -1,4 +1,4 @@
-import { adminRequest } from '@/lib/api/admin-client'
+import { usersAdminRequest, poolAdminRequest } from '@/lib/api/admin-client'
 
 export interface BatchJobItem {
   id: number
@@ -30,10 +30,19 @@ export async function fetchJobs(params?: { status?: string; page?: number; page_
   if (params?.page_size) search.set('page_size', String(params.page_size))
   const query = search.toString()
   const endpoint = query ? `/jobs?${query}` : '/jobs'
-  return adminRequest<JobsResponse>(endpoint)
+  return usersAdminRequest<JobsResponse>(endpoint)
 }
 
 export async function fetchJob(jobId: number) {
-  return adminRequest<{ id: number }>(`/jobs/${jobId}`)
+  return usersAdminRequest<{ id: number; payload?: any; last_error?: string; status: string; job_type: string }>(`/jobs/${jobId}`)
 }
 
+export async function enqueuePoolSync(groupId: number, motherId: number) {
+  return poolAdminRequest<{ success: boolean; job_id: number }>(`/pool-groups/${groupId}/sync/mother/${motherId}`, {
+    method: 'POST',
+  })
+}
+
+export async function retryJob(jobId: number) {
+  return usersAdminRequest<{ success: boolean; status: string }>(`/jobs/${jobId}/retry`, { method: 'POST' })
+}

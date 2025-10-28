@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from app.database import init_db, SessionLocal
+from app.database import init_db, SessionUsers, SessionPool
 from app.routers.routers import public as public_router
 from app.routers.admin import router as admin_router
 from app.routers.routers import stats as stats_router
@@ -14,8 +14,8 @@ from app.routers.routers import metrics as metrics_router
 from app.routers.routers import rate_limit as rate_limit_router
 from app.routers.routers import ingest as ingest_router
 from app.config import settings
-from app.middleware import SecurityHeadersMiddleware, CSRFMiddleware, InputValidationMiddleware
-from app.services.services.maintenance import cleanup_stale_held, cleanup_expired_mother_teams
+from app.middleware import SecurityHeadersMiddleware, InputValidationMiddleware
+from app.services.services.maintenance import create_maintenance_service
 from app.services.services.rate_limiter_service import init_rate_limiter, close_rate_limiter
 from app.services.services.admin import create_or_update_admin_default
 from app.security import hash_password
@@ -36,7 +36,7 @@ async def lifespan(_: FastAPI):
 
     # 初始化管理员记录（若不存在），避免登录路由隐式写库
     try:
-        db = SessionLocal()
+        db = SessionUsers()
         try:
             create_or_update_admin_default(db, hash_password(settings.admin_initial_password))
         finally:
@@ -49,7 +49,9 @@ async def lifespan(_: FastAPI):
 
     def _run_maintenance_once():
         """执行一次维护循环（同步函数，供线程池调用）。"""
-        db = SessionLocal()
+        db_users = SessionUsers()
+        db_pool = SessionPool()
+        maintenance_service = create_maintenance_service(db_users, db_pool)
         # 使用 Redis 分布式锁避免多实例并发执行维护逻辑
         lock_client = None
         lock_token = None
@@ -76,16 +78,18 @@ async def lifespan(_: FastAPI):
             # 获取锁异常时，继续执行（单实例或无 Redis 场景）
             pass
         try:
-            freed = cleanup_stale_held(db)
+            freed = maintenance_service.cleanup_stale_held()
             if freed:
                 logging.info("cleanup_stale_held: freed %s seats", freed)
 
-            deleted = cleanup_expired_mother_teams(db)
+            deleted = maintenance_service.cleanup_expired_mother_teams()
             if deleted:
                 logging.info("cleanup_expired_mother_teams: deleted %s teams", deleted)
             try:
-                from app.services.services.maintenance import sync_invite_acceptance
-                accepted = sync_invite_acceptance(db, days=settings.invite_sync_days, limit_groups=settings.invite_sync_group_limit)
+                accepted = maintenance_service.sync_invite_acceptance(
+                    days=settings.invite_sync_days,
+                    limit_groups=settings.invite_sync_group_limit,
+                )
                 if accepted:
                     logging.info("sync_invite_acceptance: updated %s invites to accepted", accepted)
             except Exception:
@@ -96,7 +100,7 @@ async def lifespan(_: FastAPI):
                 processed = 0
                 # 处理少量任务，避免阻塞
                 for _ in range(3):
-                    if process_one_job(db):
+                    if process_one_job(db_users, pool_session_factory=SessionPool):
                         processed += 1
                     else:
                         break
@@ -112,7 +116,8 @@ async def lifespan(_: FastAPI):
                     release_lock(lock_client, f"{settings.rate_limit_namespace}:maintenance_lock", lock_token)
             except Exception:
                 pass
-            db.close()
+            db_pool.close()
+            db_users.close()
 
     async def _maintenance_worker():
         """定期清理过期座位与母号数据。"""
@@ -132,7 +137,9 @@ async def lifespan(_: FastAPI):
             except asyncio.TimeoutError:
                 continue
 
-    maintenance_task = asyncio.create_task(_maintenance_worker())
+    # 测试环境禁用后台维护循环，避免 in-memory sqlite 与外部线程交互导致异常
+    if settings.env not in ("test", "testing"):
+        maintenance_task = asyncio.create_task(_maintenance_worker())
 
     try:
         yield
@@ -149,22 +156,15 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="GPT Team Auto Invite Service", lifespan=lifespan)
 
 # 添加安全中间件
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if settings.env == "dev" else [settings.domain])
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=(
+        ["*"] if settings.env in ("dev", "development", "test", "testing") else [settings.domain]
+    ),
+)
 
 # 添加输入验证中间件
 app.add_middleware(InputValidationMiddleware)
-
-# 添加CSRF防护中间件，排除公开API路径
-app.add_middleware(CSRFMiddleware, excluded_paths=[
-    "/api/public/",
-    "/api/ingest/",
-    "/api/redeem",
-    "/api/redeem/resend",
-    "/health",
-    "/docs",
-    "/openapi.json",
-    "/redoc"
-], allowed_origins=settings.csrf_allowed_origins)
 
 # 添加安全头部中间件
 app.add_middleware(SecurityHeadersMiddleware)

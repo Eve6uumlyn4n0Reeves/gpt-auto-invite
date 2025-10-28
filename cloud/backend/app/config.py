@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 class Settings:
     # 原始数据库URL（如果未提供，则使用绝对路径SQLite默认值）
     database_url_raw: str = os.getenv("DATABASE_URL", "")
+    # 双库（可选）：用户组库与号池库
+    database_url_users_raw: str = os.getenv("DATABASE_URL_USERS", "")
+    database_url_pool_raw: str = os.getenv("DATABASE_URL_POOL", "")
     encryption_key_b64: str = os.getenv("ENCRYPTION_KEY", "")
     admin_initial_password: str = os.getenv("ADMIN_INITIAL_PASSWORD", "admin123")
     http_proxy: Optional[str] = os.getenv("HTTP_PROXY")
@@ -67,6 +70,10 @@ class Settings:
     db_pool_timeout: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
     db_pool_recycle: int = int(os.getenv("DB_POOL_RECYCLE", "3600"))
 
+    # 号池组与子号邮箱域名（可配置，不要写死）
+    child_email_domain: Optional[str] = os.getenv("CHILD_EMAIL_DOMAIN")
+    pool_auto_invite_missing: bool = os.getenv("POOL_AUTO_INVITE_MISSING", "false").lower() == "true"
+
     @property
     def database_url(self) -> str:
         """获取数据库连接URL。
@@ -80,6 +87,16 @@ class Settings:
         default_db_path = os.path.join(base_dir, "data", "app.db")
         # 绝对路径SQLite：sqlite:////absolute/path
         return f"sqlite:///{default_db_path if default_db_path.startswith('/') else '/' + default_db_path}"
+
+    @property
+    def database_url_users(self) -> str:
+        """用户组链路数据库URL（若未配置则回退到单库URL）。"""
+        return self.database_url_users_raw or self.database_url
+
+    @property
+    def database_url_pool(self) -> str:
+        """号池链路数据库URL（若未配置则回退到单库URL）。"""
+        return self.database_url_pool_raw or self.database_url
 
     @property
     def encryption_key(self) -> bytes:

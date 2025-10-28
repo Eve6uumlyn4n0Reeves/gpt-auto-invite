@@ -7,7 +7,8 @@ from app.services.services.rate_limiter_service import get_rate_limiter, ip_stra
 from app.utils.utils.rate_limiter.fastapi_integration import rate_limit
 from starlette.requests import Request as StarletteRequest
 from fastapi.concurrency import run_in_threadpool
-from app.database import SessionLocal
+# 注意：不要改名，测试会在 conftest 中覆盖 public.SessionLocal
+from app.database import SessionLocal, SessionPool
 
 
 async def get_rate_limiter_dep():
@@ -74,11 +75,13 @@ async def redeem_resend(
         raise HTTPException(status_code=400, detail="缺少 team_id")
 
     def _resend_sync() -> dict:
-        db = SessionLocal()
+        db_users = SessionLocal()
+        db_pool = SessionPool()
         try:
-            ok, msg = resend_invite(db, req.email.strip().lower(), req.team_id)
+            ok, msg = resend_invite(db_users, db_pool, req.email.strip().lower(), req.team_id)
             return {"success": ok, "message": msg}
         finally:
-            db.close()
+            db_pool.close()
+            db_users.close()
 
     return await run_in_threadpool(_resend_sync)

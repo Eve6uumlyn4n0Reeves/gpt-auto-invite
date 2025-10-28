@@ -1,4 +1,4 @@
-import { adminRequest } from '@/lib/api/admin-client'
+import { usersAdminRequest } from '@/lib/api/admin-client'
 import type { UserData } from '@/store/admin-context'
 
 export interface UsersQueryParams {
@@ -27,5 +27,5 @@ export async function fetchUsers(params: UsersQueryParams) {
   const query = search.toString()
   const endpoint = query ? `/users?${query}` : '/users'
 
-  return adminRequest<UsersResponse>(endpoint)
+  return usersAdminRequest<UsersResponse>(endpoint)
 }

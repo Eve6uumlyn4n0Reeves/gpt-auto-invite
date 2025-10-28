@@ -7,6 +7,7 @@
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
+    "ci:domain-check": "node scripts/check-domain-imports.cjs",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",

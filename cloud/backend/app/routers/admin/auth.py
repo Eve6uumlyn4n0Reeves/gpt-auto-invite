@@ -53,6 +53,13 @@ async def admin_login(
 
     # 管理员记录在应用启动阶段初始化；此处不再隐式创建
     row = db.query(models.AdminConfig).first()
+    if not row:
+        # 测试环境兜底：如果启动时未成功创建默认管理员，这里补一次
+        try:
+            create_or_update_admin_default(db, hash_password(settings.admin_initial_password))
+            row = db.query(models.AdminConfig).first()
+        except Exception:
+            row = None
     
     if not verify_admin_password(payload.password, row.password_hash):
         record_login_attempt(ip, False)
