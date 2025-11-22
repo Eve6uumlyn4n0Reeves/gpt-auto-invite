@@ -1,0 +1,25 @@
+import { usersAdminRequest } from '@/lib/api/admin-client'
+import type { UserData } from '@/store/admin-context'
+import type { InviteStatus, PaginatedResponse } from '@/shared/api-types'
+
+export interface UsersQueryParams {
+  page?: number
+  page_size?: number
+  status?: InviteStatus | 'all'
+  search?: string
+}
+
+export type UsersResponse = PaginatedResponse<UserData>
+
+export async function fetchUsers(params: UsersQueryParams) {
+  const search = new URLSearchParams()
+  if (params.page) search.set('page', String(params.page))
+  if (params.page_size) search.set('page_size', String(params.page_size))
+  if (params.status && params.status !== 'all') search.set('status', params.status)
+  if (params.search?.trim()) search.set('search', params.search.trim())
+
+  const query = search.toString()
+  const endpoint = query ? `/users?${query}` : '/users'
+
+  return usersAdminRequest<UsersResponse>(endpoint)
+}

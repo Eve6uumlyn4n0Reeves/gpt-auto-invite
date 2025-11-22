@@ -34,6 +34,7 @@ coverage/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+.deps/
 
 # App data / local databases
 cloud/backend/app/data/
